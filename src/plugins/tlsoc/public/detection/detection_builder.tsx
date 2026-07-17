@@ -10,7 +10,6 @@ import {
   EuiButton,
   EuiButtonEmpty,
   EuiButtonGroup,
-  EuiButtonIcon,
   EuiCallOut,
   EuiCodeBlock,
   EuiComboBox,
@@ -27,6 +26,7 @@ import {
   EuiPanel,
   EuiSelect,
   EuiSpacer,
+  EuiSwitch,
   EuiText,
   EuiTitle,
 } from '@elastic/eui';
@@ -48,6 +48,8 @@ import {
   deriveAliasName,
 } from '../../common/detection';
 import { ConditionRow } from './condition_row';
+import { MitreTtpPicker } from './mitre_ttp_picker';
+import { ScheduleSection } from './schedule_section';
 import { useDataViewFields, useDataViews } from './use_data_view_fields';
 import {
   DetectionMode,
@@ -66,66 +68,15 @@ interface Props {
   /** Initial mode + rule to hydrate the form from (the lossless edit round-trip). */
   initialMode?: DetectionMode;
   initialRule?: RuleDefinition | ThresholdRuleDefinition;
+  /** Initial enabled state (edit hydration). Defaults to true for a brand-new detection. */
+  initialEnabled?: boolean;
+  /** Warnings from a Sigma import that produced this rule — surfaced at the top of the form. */
+  importWarnings?: string[];
   /** Called after a successful save/update (and on "Back") so the host can return to the list. */
   onDone?: () => void;
 }
 
 const DEFAULT_CONDITION: Condition = { field: '', operator: 'exists' };
-
-/**
- * The 14 MITRE ATT&CK Enterprise tactics (public taxonomy — clean-room, no bundled ATT&CK corpus
- * in v1.1). References are auto-derived from the id, not stored statically here.
- */
-const MITRE_TACTICS: Array<{ id: string; name: string }> = [
-  { id: 'TA0043', name: 'Reconnaissance' },
-  { id: 'TA0042', name: 'Resource Development' },
-  { id: 'TA0001', name: 'Initial Access' },
-  { id: 'TA0002', name: 'Execution' },
-  { id: 'TA0003', name: 'Persistence' },
-  { id: 'TA0004', name: 'Privilege Escalation' },
-  { id: 'TA0005', name: 'Defense Evasion' },
-  { id: 'TA0006', name: 'Credential Access' },
-  { id: 'TA0007', name: 'Discovery' },
-  { id: 'TA0008', name: 'Lateral Movement' },
-  { id: 'TA0009', name: 'Collection' },
-  { id: 'TA0011', name: 'Command and Control' },
-  { id: 'TA0010', name: 'Exfiltration' },
-  { id: 'TA0040', name: 'Impact' },
-];
-
-function tacticReference(id: string): string {
-  return `https://attack.mitre.org/tactics/${id}/`;
-}
-
-/** e.g. 'T1110' → '.../techniques/T1110/'; 'T1110.001' → '.../techniques/T1110/001/'. */
-function techniqueReference(id: string): string {
-  return `https://attack.mitre.org/techniques/${id.replace('.', '/')}/`;
-}
-
-interface TechniqueRow {
-  id: string;
-  name: string;
-}
-
-/** v1.1 scope: a single ThreatEntry (one tactic) with a LIST of free-text techniques. */
-function buildThreatEntries(tacticId: string, techniques: TechniqueRow[]): ThreatEntry[] | undefined {
-  const tactic = MITRE_TACTICS.find((t) => t.id === tacticId);
-  const cleanTechniques = techniques
-    .filter((t) => t.id.trim() !== '')
-    .map((t) => ({
-      id: t.id.trim(),
-      name: t.name.trim() || t.id.trim(),
-      reference: techniqueReference(t.id.trim()),
-    }));
-  if (!tactic && cleanTechniques.length === 0) return undefined;
-  return [
-    {
-      framework: 'MITRE ATT&CK',
-      ...(tactic ? { tactic: { id: tactic.id, name: tactic.name, reference: tacticReference(tactic.id) } } : {}),
-      ...(cleanTechniques.length ? { technique: cleanTechniques } : {}),
-    },
-  ];
-}
 
 /** Compute initial form values from a saved rule (edit hydration), or defaults for a new rule. */
 function seedFrom(
@@ -139,7 +90,6 @@ function seedFrom(
   const conditions: Condition[] = grp?.conditions?.length
     ? grp.conditions.map((c: Condition) => ({ ...c }))
     : [{ ...DEFAULT_CONDITION }];
-  const threatEntry = (r?.threat as ThreatEntry[] | undefined)?.[0];
   return {
     mode,
     name: (r?.name as string) ?? '',
@@ -152,13 +102,14 @@ function seedFrom(
     thresholdOp: (r?.threshold?.operator as CountThreshold['operator']) ?? 'gt',
     thresholdValue: (r?.threshold?.value as number) ?? 1000,
     // WS-1 (PROB-1): triage/context metadata — round-trips losslessly via seedFrom + currentRule.
-    mitreTacticId: threatEntry?.tactic?.id ?? '',
-    mitreTechniques: (threatEntry?.technique ?? []).map((t) => ({ id: t.id, name: t.name })) as TechniqueRow[],
+    threat: (r?.threat as ThreatEntry[] | undefined) ?? [],
     riskScore: (r?.riskScore as number | undefined) ?? undefined,
     note: (r?.note as string) ?? '',
     investigationFields: (r?.investigationFields as string[]) ?? [],
     falsePositives: (r?.falsePositives as string[]) ?? [],
     references: (r?.references as string[]) ?? [],
+    // WS-20 (PROB-20): the schedule cadence R — round-trips losslessly, undefined = legacy default.
+    runEvery: r?.runEvery as TimeWindow | undefined,
   };
 }
 
@@ -179,7 +130,16 @@ function cleanConditions(conditions: Condition[]): Condition[] {
  * and dry-runs it against real data via the proven /api/tlsoc/detection/_execute route (Task 3.3).
  * The builder never compiles client-side — it sends the structured rule; the server compiles + runs.
  */
-export function DetectionBuilder({ core, data, editSoId, initialMode, initialRule, onDone }: Props) {
+export function DetectionBuilder({
+  core,
+  data,
+  editSoId,
+  initialMode,
+  initialRule,
+  initialEnabled,
+  importWarnings,
+  onDone,
+}: Props) {
   const seed = useMemo(() => seedFrom(initialMode, initialRule), [initialMode, initialRule]);
   const isEdit = !!editSoId;
   const { views, loadingViews, error: viewsError } = useDataViews(data);
@@ -204,13 +164,19 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
   const [to, setTo] = useState('2026-05-16T10:02:00Z');
 
   // Triage & context (optional) — WS-1, PROB-1.
-  const [mitreTacticId, setMitreTacticId] = useState<string>(seed.mitreTacticId);
-  const [mitreTechniques, setMitreTechniques] = useState<TechniqueRow[]>(seed.mitreTechniques);
+  const [threat, setThreat] = useState<ThreatEntry[]>(seed.threat);
   const [riskScore, setRiskScore] = useState<number | undefined>(seed.riskScore);
   const [note, setNote] = useState<string>(seed.note);
   const [investigationFields, setInvestigationFields] = useState<string[]>(seed.investigationFields);
   const [falsePositives, setFalsePositives] = useState<string[]>(seed.falsePositives);
   const [references, setReferences] = useState<string[]>(seed.references);
+
+  // Schedule cadence R (optional) — WS-20, PROB-20.
+  const [runEvery, setRunEvery] = useState<TimeWindow | undefined>(seed.runEvery);
+
+  // Enable/disable on save (WS-19, PROB-19) — defaults to true for a brand-new detection; edit
+  // hydration passes the saved object's current value in via `initialEnabled`.
+  const [enabled, setEnabled] = useState(initialEnabled ?? true);
 
   const [testing, setTesting] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -239,9 +205,8 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
     const cleaned = cleanConditions(conditions);
     const index = selectedView?.title ?? '';
     const ruleName = name.trim() || 'Untitled detection';
-    const threat = buildThreatEntries(mitreTacticId, mitreTechniques);
     const metadata: RuleMetadataFields = {
-      ...(threat ? { threat } : {}),
+      ...(threat.length ? { threat } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
       ...(investigationFields.length ? { investigationFields } : {}),
       ...(riskScore !== undefined ? { riskScore } : {}),
@@ -249,7 +214,14 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
       ...(references.length ? { references } : {}),
     };
     if (mode === 'stateless') {
-      return { name: ruleName, severity, index, group: { logic, conditions: cleaned }, ...metadata };
+      return {
+        name: ruleName,
+        severity,
+        index,
+        group: { logic, conditions: cleaned },
+        ...(runEvery ? { runEvery } : {}),
+        ...metadata,
+      };
     }
     return {
       name: ruleName,
@@ -259,6 +231,7 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
       groupBy,
       window: { value: windowValue, unit: windowUnit },
       threshold: { operator: thresholdOp, value: thresholdValue },
+      ...(runEvery ? { runEvery } : {}),
       ...metadata,
     };
   }, [
@@ -273,13 +246,13 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
     windowUnit,
     thresholdOp,
     thresholdValue,
-    mitreTacticId,
-    mitreTechniques,
+    threat,
     note,
     investigationFields,
     riskScore,
     falsePositives,
     references,
+    runEvery,
   ]);
 
   /**
@@ -330,7 +303,7 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
     setSaveError(null);
     setSaveResult(null);
     try {
-      const body = JSON.stringify({ mode, rule: currentRule });
+      const body = JSON.stringify({ mode, rule: currentRule, enabled });
       const resp = isEdit
         ? await core.http.put(`/api/tlsoc/detection/monitors/${editSoId}`, { body })
         : await core.http.post('/api/tlsoc/detection/monitors', { body });
@@ -418,6 +391,23 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
           </p>
         </EuiText>
         <EuiSpacer size="l" />
+
+        {importWarnings && importWarnings.length > 0 ? (
+          <>
+            <EuiCallOut
+              color="warning"
+              iconType="alert"
+              title="Imported from Sigma with warnings"
+            >
+              <ul>
+                {importWarnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </EuiCallOut>
+            <EuiSpacer size="m" />
+          </>
+        ) : null}
 
         {viewsError ? (
           <>
@@ -580,6 +570,14 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
             </>
           ) : null}
 
+          <ScheduleSection
+            mode={mode}
+            runEvery={runEvery}
+            window={mode === 'stateful' ? { value: windowValue, unit: windowUnit } : undefined}
+            onChange={setRunEvery}
+          />
+          <EuiSpacer size="m" />
+
           <EuiPanel hasShadow={false} hasBorder>
             <EuiTitle size="xs">
               <h2>Rule details</h2>
@@ -617,19 +615,9 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
                 </p>
               </EuiText>
               <EuiSpacer size="s" />
+              <MitreTtpPicker value={threat} onChange={setThreat} />
+              <EuiSpacer size="s" />
               <EuiFlexGroup>
-                <EuiFlexItem>
-                  <EuiFormRow label="MITRE ATT&CK tactic">
-                    <EuiSelect
-                      options={[
-                        { value: '', text: '— none —' },
-                        ...MITRE_TACTICS.map((t) => ({ value: t.id, text: `${t.id} — ${t.name}` })),
-                      ]}
-                      value={mitreTacticId}
-                      onChange={(e) => setMitreTacticId(e.target.value)}
-                    />
-                  </EuiFormRow>
-                </EuiFlexItem>
                 <EuiFlexItem grow={false} style={{ width: 180 }}>
                   <EuiFormRow label="Risk score (0-100)">
                     <EuiFieldNumber
@@ -649,58 +637,6 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
                   </EuiFormRow>
                 </EuiFlexItem>
               </EuiFlexGroup>
-              <EuiSpacer size="s" />
-              <EuiFormRow
-                label="MITRE ATT&CK technique(s)"
-                helpText="Technique id (e.g. T1110, or a sub-technique T1110.001) + a short name. References to attack.mitre.org are derived automatically."
-                fullWidth
-              >
-                <div>
-                  {mitreTechniques.map((t, i) => (
-                    <div key={i}>
-                      <EuiFlexGroup gutterSize="s" alignItems="center">
-                        <EuiFlexItem>
-                          <EuiFieldText
-                            placeholder="Technique id, e.g. T1110"
-                            value={t.id}
-                            onChange={(e) =>
-                              setMitreTechniques((ts) =>
-                                ts.map((row, ri) => (ri === i ? { ...row, id: e.target.value } : row))
-                              )
-                            }
-                          />
-                        </EuiFlexItem>
-                        <EuiFlexItem>
-                          <EuiFieldText
-                            placeholder="Technique name, e.g. Brute Force"
-                            value={t.name}
-                            onChange={(e) =>
-                              setMitreTechniques((ts) =>
-                                ts.map((row, ri) => (ri === i ? { ...row, name: e.target.value } : row))
-                              )
-                            }
-                          />
-                        </EuiFlexItem>
-                        <EuiFlexItem grow={false}>
-                          <EuiButtonIcon
-                            iconType="trash"
-                            color="danger"
-                            aria-label="Remove technique"
-                            onClick={() => setMitreTechniques((ts) => ts.filter((_, ri) => ri !== i))}
-                          />
-                        </EuiFlexItem>
-                      </EuiFlexGroup>
-                      <EuiSpacer size="xs" />
-                    </div>
-                  ))}
-                  <EuiButtonEmpty
-                    iconType="plusInCircle"
-                    onClick={() => setMitreTechniques((ts) => [...ts, { id: '', name: '' }])}
-                  >
-                    Add technique
-                  </EuiButtonEmpty>
-                </div>
-              </EuiFormRow>
               <EuiSpacer size="s" />
               <EuiFormRow
                 label="Investigation fields"
@@ -925,6 +861,12 @@ export function DetectionBuilder({ core, data, editSoId, initialMode, initialRul
               </p>
             </EuiText>
             <EuiSpacer size="s" />
+            <EuiSwitch
+              label="Enable this detection (runs on its schedule once saved)"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
+            <EuiSpacer size="m" />
             <EuiButton
               fill
               iconType="save"

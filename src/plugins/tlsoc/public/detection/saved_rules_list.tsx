@@ -23,6 +23,7 @@ import {
   EuiTitle,
 } from '@elastic/eui';
 import { CoreStart } from 'opensearch-dashboards/public';
+import { EnabledToggle } from './enabled_toggle';
 
 /** One row of the saved-detections list (shape returned by GET /api/tlsoc/detection/monitors). */
 export interface SavedRuleRow {
@@ -34,16 +35,18 @@ export interface SavedRuleRow {
   executionAlias?: string;
   monitorId: string;
   createdAt?: string;
+  enabled: boolean;
 }
 
 interface Props {
   core: CoreStart;
   onCreate: () => void;
   onEdit: (soId: string) => void;
+  onImport: () => void;
 }
 
 /** Lists saved `tlsoc-detection-rule` detections with Edit / Delete (delete removes monitor + SO). */
-export function SavedRulesList({ core, onCreate, onEdit }: Props) {
+export function SavedRulesList({ core, onCreate, onEdit, onImport }: Props) {
   const [rules, setRules] = useState<SavedRuleRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +102,20 @@ export function SavedRulesList({ core, onCreate, onEdit }: Props) {
       ),
     },
     { field: 'severity', name: 'Severity', sortable: true },
+    {
+      field: 'enabled',
+      name: 'Enabled',
+      width: '90px',
+      render: (_enabled: boolean, r: SavedRuleRow) => (
+        <EnabledToggle
+          core={core}
+          soId={r.soId}
+          mode={r.mode}
+          enabled={r.enabled}
+          onChanged={() => load()}
+        />
+      ),
+    },
     { field: 'index', name: 'Index', truncateText: true },
     {
       field: 'createdAt',
@@ -141,9 +158,18 @@ export function SavedRulesList({ core, onCreate, onEdit }: Props) {
             </EuiText>
           </EuiFlexItem>
           <EuiFlexItem grow={false}>
-            <EuiButton fill iconType="plusInCircle" onClick={onCreate}>
-              Create detection
-            </EuiButton>
+            <EuiFlexGroup gutterSize="s">
+              <EuiFlexItem grow={false}>
+                <EuiButton iconType="importAction" onClick={onImport}>
+                  Import Sigma rule
+                </EuiButton>
+              </EuiFlexItem>
+              <EuiFlexItem grow={false}>
+                <EuiButton fill iconType="plusInCircle" onClick={onCreate}>
+                  Create detection
+                </EuiButton>
+              </EuiFlexItem>
+            </EuiFlexGroup>
           </EuiFlexItem>
         </EuiFlexGroup>
         <EuiSpacer size="l" />
@@ -172,11 +198,14 @@ export function SavedRulesList({ core, onCreate, onEdit }: Props) {
               iconType="securityApp"
               title={<h2>No detections yet</h2>}
               body={<p>Create your first detection to start watching your data.</p>}
-              actions={
-                <EuiButton fill iconType="plusInCircle" onClick={onCreate}>
+              actions={[
+                <EuiButton fill iconType="plusInCircle" onClick={onCreate} key="create">
                   Create your first detection
-                </EuiButton>
-              }
+                </EuiButton>,
+                <EuiButton iconType="importAction" onClick={onImport} key="import">
+                  Import Sigma rule
+                </EuiButton>,
+              ]}
             />
           ) : (
             <EuiBasicTable items={rules} columns={columns} rowHeader="name" />
