@@ -11,8 +11,8 @@
  * all read from this object.
  */
 export const TLSOC_BRANDING = {
-  /** shown in the Help popover as "v {version}". First release. */
-  version: '1.0',
+  /** shown in the Help popover as "v {version}". Bump on each product release. */
+  version: '1.1',
 
   /** "Documentation" → the deploy/onboarding repo (rsyslog→Kafka→engine→OpenSearch→TLSOC). */
   docsUrl: 'https://github.com/sankettaware16/TLSOCDockerDeploy',
