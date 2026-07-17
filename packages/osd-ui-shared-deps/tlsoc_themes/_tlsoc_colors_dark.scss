@@ -1,0 +1,138 @@
+/*!
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ *
+ * Modifications Copyright OpenSearch Contributors. See
+ * GitHub history for details.
+ */
+
+/*
+ * TLSOC: vendored copy of
+ *   node_modules/@elastic/eui/src/themes/oui-next/oui_next_colors_dark.scss (OUI 1.22.1)
+ * with EXACTLY 4 changes from upstream:
+ *   - the functions @import below is absolutized (so it resolves from this file's location)
+ *   - $ouiColorPrimary   #159D8D -> #C266FF  (TLSOC purple)
+ *   - $ouiColorSecondary #7DE2D1 -> #34D399  (TLSOC emerald; success = secondary)
+ *   - $ouiColorAccent    #F990C0 -> #38BDF8  (TLSOC azure)
+ * Everything else is identical to upstream; derived text/link/alias tokens recompute from these
+ * bases (makeHighContrastColor of each passes 4.5:1, so they equal the bases). See journal Task 1.3.
+ */
+
+@import '@elastic/eui/src/themes/oui-next/global_styling/functions/index';
+
+// These colors stay the same no matter the theme
+$ouiColorGhost: #FCFEFF;
+$ouiColorInk: #0A121A;
+
+// Core
+$ouiColorPrimary: #C266FF;
+$ouiColorSecondary: #34D399;
+$ouiColorAccent: #38BDF8;
+
+// Status
+$ouiColorSuccess: $ouiColorSecondary;
+$ouiColorWarning: #FFCE7A;
+$ouiColorDanger: #FF6666;
+
+// Grays
+$ouiColorEmptyShade: #0A121A;
+$ouiColorLightestShade: #101B25;
+$ouiColorLightShade: #293847;
+$ouiColorMediumShade: #5B6875;
+$ouiColorDarkShade: #8D98A3;
+$ouiColorDarkestShade: #DFE3E8;
+$ouiColorFullShade: #FCFEFF;
+
+// Backgrounds
+$ouiPageBackgroundColor: #172430;
+$ouiColorHighlight: #2E2D25;
+
+// CodeBlock
+$ouiCodeBlockCommentShade: #838B93;
+$ouiCodeBlockStringShade: #D0809B;
+$ouiCodeBlockNameShade: #6AB0F1;
+$ouiCodeBlockNumberShade: #10B688;
+$ouiCodeBlockKeywordShade: #B174FC;
+$ouiCodeBlockTypeShade: #6AB0F1;
+$ouiCodeBlockTitleShade: #DD8232;
+
+// Variations from core
+$ouiTextColor: #DFE5EF;
+$ouiTitleColor: $ouiTextColor;
+// Ensure contrast between subdued text and the page background
+// Should not be shaded as much as $ouiColorDisabled
+$ouiTextSubduedColor: makeHighContrastColor(shade($ouiTextColor, 30%), $ouiPageBackgroundColor);
+$ouiColorDisabled: shade($ouiTextColor, 70%);
+
+// Contrasty text variants
+$ouiColorPrimaryText: makeHighContrastColor($ouiColorPrimary);
+$ouiColorSecondaryText: makeHighContrastColor($ouiColorSecondary);
+$ouiColorAccentText: makeHighContrastColor($ouiColorAccent);
+$ouiColorWarningText: makeHighContrastColor($ouiColorWarning);
+$ouiColorDangerText: makeHighContrastColor($ouiColorDanger);
+$ouiColorDisabledText: makeDisabledContrastColor($ouiColorDisabled);
+$ouiColorSuccessText: $ouiColorSecondaryText;
+$ouiLinkColor: $ouiColorPrimaryText;
+
+// Charts
+$ouiColorChartLines: $ouiColorLightShade;
+$ouiColorChartBand: tint($ouiColorLightestShade, 2.5%);
+
+// Shadows
+$ouiShadowColor: #000;
+$ouiShadowColorLarge: #000;
+
+//CodeBlock Colors
+$ouiCodeBlockCommentColor: $ouiCodeBlockCommentShade;
+$ouiCodeBlockStringColor: $ouiCodeBlockStringShade;
+$ouiCodeBlockNameColor: $ouiCodeBlockNameShade;
+$ouiCodeBlockNumberColor: $ouiCodeBlockNumberShade;
+$ouiCodeBlockKeywordColor: $ouiCodeBlockKeywordShade;
+$ouiCodeBlockTypeColor: $ouiCodeBlockTypeShade;
+$ouiCodeBlockTitleColor: $ouiCodeBlockTitleShade;
+
+/* OUI -> EUI Aliases */
+$euiCodeBlockCommentColor: $ouiCodeBlockCommentColor;
+$euiCodeBlockStringColor: $ouiCodeBlockStringColor;
+$euiCodeBlockNameColor: $ouiCodeBlockNameColor;
+$euiCodeBlockNumberColor: $ouiCodeBlockNumberColor;
+$euiCodeBlockKeywordColor: $ouiCodeBlockKeywordColor;
+$euiCodeBlockTypeColor: $ouiCodeBlockTypeColor;
+$euiCodeBlockTitleColor: $ouiCodeBlockTitleColor;
+$euiColorGhost: $ouiColorGhost;
+$euiColorInk: $ouiColorInk;
+$euiColorPrimary: $ouiColorPrimary;
+$euiColorSecondary: $ouiColorSecondary;
+$euiColorAccent: $ouiColorAccent;
+$euiColorSuccess: $ouiColorSuccess;
+$euiColorWarning: $ouiColorWarning;
+$euiColorDanger: $ouiColorDanger;
+$euiColorEmptyShade: $ouiColorEmptyShade;
+$euiColorLightestShade: $ouiColorLightestShade;
+$euiColorLightShade: $ouiColorLightShade;
+$euiColorMediumShade: $ouiColorMediumShade;
+$euiColorDarkShade: $ouiColorDarkShade;
+$euiColorDarkestShade: $ouiColorDarkestShade;
+$euiColorFullShade: $ouiColorFullShade;
+$euiPageBackgroundColor: $ouiPageBackgroundColor;
+$euiColorHighlight: $ouiColorHighlight;
+$euiTextColor: $ouiTextColor;
+$euiTitleColor: $ouiTitleColor;
+$euiTextSubduedColor: $ouiTextSubduedColor;
+$euiColorDisabled: $ouiColorDisabled;
+$euiColorPrimaryText: $ouiColorPrimaryText;
+$euiColorSecondaryText: $ouiColorSecondaryText;
+$euiColorAccentText: $ouiColorAccentText;
+$euiColorWarningText: $ouiColorWarningText;
+$euiColorDangerText: $ouiColorDangerText;
+$euiColorDisabledText: $ouiColorDisabledText;
+$euiColorSuccessText: $ouiColorSuccessText;
+$euiLinkColor: $ouiLinkColor;
+$euiColorChartLines: $ouiColorChartLines;
+$euiColorChartBand: $ouiColorChartBand;
+$euiShadowColor: $ouiShadowColor;
+$euiShadowColorLarge: $ouiShadowColorLarge;
+/* End of Aliases */

@@ -1,0 +1,4 @@
+.env
+certs/
+parser_output/
+*.log

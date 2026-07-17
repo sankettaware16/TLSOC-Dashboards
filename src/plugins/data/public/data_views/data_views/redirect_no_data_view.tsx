@@ -31,7 +31,7 @@ export const onRedirectNoDataView = (
 
   const bannerMessage = i18n.translate('data.dataViews.ensureDefaultDataView.bannerLabel', {
     defaultMessage:
-      'To visualize and explore data in OpenSearch Dashboards, you must create a dataset to retrieve data from the data source.',
+      'To visualize and explore data in TLSOC, you must create a dataset to retrieve data from the data source.',
   });
 
   // Avoid being hostile to new users who don't have a dataset setup yet

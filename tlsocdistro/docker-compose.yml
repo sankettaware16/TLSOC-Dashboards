@@ -1,0 +1,82 @@
+## TLSOC — one-click SOC stack (OpenSearch edition)
+## Pipeline:  endpoints → Kafka → FOSS SOC Engine → Logstash → OpenSearch → TLSOC Dashboards
+## This mirrors TLSOCDockerDeploy (the ELK edition) but replaces Elasticsearch with OpenSearch and
+## Kibana with the TLSOC Dashboards, and points Logstash at OpenSearch. The FOSS SOC Engine runs on
+## the host (see README) and writes ECS JSON into ./parser_output, which Logstash tails.
+
+services:
+  opensearch:
+    image: opensearchproject/opensearch:${OPENSEARCH_VERSION}
+    container_name: tlsoc-opensearch
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms${OPENSEARCH_HEAP} -Xmx${OPENSEARCH_HEAP}"
+      # OpenSearch ships demo TLS + the internal-users security config out of the box; this sets the
+      # admin password. DEV/TEST default — replace the demo certs with real ones for production.
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_ADMIN_PASSWORD}
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - osdata:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk -u admin:$${OPENSEARCH_ADMIN_PASSWORD} https://localhost:9200 >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+
+  tlsoc-dashboards:
+    # Build this image once with ./dashboards/build-image.sh (it builds the TLSOC Dashboards from
+    # the hard-forked source). See README → "Build the TLSOC Dashboards image".
+    image: ${TLSOC_DASHBOARDS_IMAGE}
+    container_name: tlsoc-dashboards
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    # Config comes entirely from the bind-mounted opensearch_dashboards.yml below — no entrypoint
+    # in this image consumes environment variables, so none are set here.
+    volumes:
+      - ./dashboards/opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml:ro
+    ports:
+      - "${DASHBOARDS_PORT}:5601"
+
+  kafka:
+    image: apache/kafka:${KAFKA_VERSION}
+    container_name: tlsoc-kafka
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_LISTENERS=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9094,CONTROLLER://0.0.0.0:9093
+      - KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka:9092,EXTERNAL://${HOST_IP}:9094
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+    ports:
+      - "9094:9094"   # EXTERNAL — endpoints' rsyslog/omkafka forward here
+
+  logstash:
+    # OpenSearch-flavored Logstash: the OSS build with the logstash-output-opensearch plugin. This
+    # is the only functional change from the ELK edition's logstash — the output plugin + host.
+    image: opensearchproject/logstash-oss-with-opensearch-output-plugin:${LOGSTASH_VERSION}
+    container_name: tlsoc-logstash
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ./logstash/config/pipelines.yml:/usr/share/logstash/config/pipelines.yml:ro
+      # the FOSS SOC Engine (on the host) writes ECS JSON here; Logstash tails it read-only
+      - ${PARSER_OUTPUT_DIR}:/parser_output:ro
+    environment:
+      - OPENSEARCH_ADMIN_PASSWORD=${OPENSEARCH_ADMIN_PASSWORD}
+
+volumes:
+  osdata:

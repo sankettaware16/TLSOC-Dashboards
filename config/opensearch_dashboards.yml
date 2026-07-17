@@ -5,6 +5,10 @@
 # The default is 'localhost', which usually means remote machines will not be able to connect.
 # To allow connections from remote users, set this parameter to a non-loopback address.
 # server.host: "localhost"
+# TLSOC dev (human request 2026-07-15): bind on all interfaces so gates can be tested across the
+# LAN (http://<machine-ip>:5603/<basepath>). DEV-ONLY — Phase 6 packaging decides the real
+# deployment binding (and must firewall the engine's :9200 away from end users).
+server.host: "0.0.0.0"
 
 # Enables you to specify a path to mount OpenSearch Dashboards at if you are running behind a proxy.
 # Use the `server.rewriteBasePath` setting to tell OpenSearch Dashboards if it should remove the basePath
@@ -255,19 +259,14 @@
 #  'ff00::/8',
 # ]
 
-# opensearchDashboards.branding:
-#   logo:
-#     defaultUrl: ""
-#     darkModeUrl: ""
-#   mark:
-#     defaultUrl: ""
-#     darkModeUrl: ""
-#   loadingLogo:
-#     defaultUrl: ""
-#     darkModeUrl: ""
-#   faviconUrl: ""
-#   applicationTitle: ""
-#   useExpandedHeader: false
+# TLSOC branding. The logo, mark, and favicon now come from the BUILT-IN TLSOC DEFAULTS
+# (src/core/common/logos/get_logos.ts → ui/logos/tlsoc_*.svg, and the regenerated core_app/assets/favicons/*).
+# Those defaults are basePath-prepended, so they render under ANY basePath with NO custom URLs here and NO
+# --no-base-path dev flag. Only applicationTitle + useExpandedHeader remain (no asset URLs needed).
+# The placeholder tlsoc_*.svg assets get swapped for the official IITB Trust Lab asset at the same paths later.
+opensearchDashboards.branding:
+  applicationTitle: "TLSOC"
+  useExpandedHeader: false
 
 # Set the value of this setting to true to capture region denied warnings and errors
 # for your map rendering services.
@@ -367,7 +366,14 @@
 # Set the value to true to enable permission control for saved objects
 # Permission control depends on OpenSearch Dashboards has authentication enabled, set it to false when the security plugin is not installed,
 # if the security plugin is not installed and this config is true, permission control takes no effect.
-# savedObjects.permission.enabled: true
+# ============ TLSOC Phase 5b — Task 5b.3a (the D-014 ACL carve-out) ============
+# The saved-objects ACL layer: real per-workspace membership/visibility on top of the 5b.2
+# partition (workspace list + contents filter by permissions.<mode>.<users|groups>).
+# ⚠️ Changing this flag ALTERS THE SAVED-OBJECTS INDEX MAPPING → core runs an index migration
+# at next boot. Snapshot .kibana before touching it (5b.3a used tlsoc-kibana-backup-pre-5b3a).
+# ⚠️ Must be set TOGETHER with opensearchDashboards.dashboardAdmin.users below — with security
+# on and empty admin lists, NOBODY can administer workspaces.
+savedObjects.permission.enabled: true
 
 # uiSettings:
 #   overrides:
@@ -399,6 +405,19 @@
 # If the user config is set to wildcard ["*"], anyone will be dashboard admin.
 # opensearchDashboards.dashboardAdmin.groups: ["dashboard_admin"]
 # opensearchDashboards.dashboardAdmin.users: ["dashboard_admin"]
+# TLSOC Phase 5b — Task 5b.3a: dashboard admins (usernames — the ACL principals model matches
+# user_name + backend_roles). DEV-ONLY user set; Phase 6 replaces with a real admin group.
+opensearchDashboards.dashboardAdmin.users: ["admin", "tlsoc-super"]
+# TLSOC Task 5b.4b: backend role "admin" = TLSOC superuser → automatically a full OSD dashboard
+# admin (workspace management + ACL bypass). This makes superusers minted through the security UI
+# ("create another superuser", ELK parity) fully functional without per-username yml edits.
+opensearchDashboards.dashboardAdmin.groups: ["admin"]
+
+# TLSOC Overview page: which index pattern(s) hold the agentless log pipeline's output. The
+# shipped code default is 'fosstlsoc-logs-*,all-logs-*,soc-*' (real pipeline). This DEMO cluster
+# also opts in the bundled "TLSOC Security Logs" sample dataset so the Overview shows a richer,
+# recent, multi-day posture out of the box. Real deployments can drop the sample index.
+tlsoc.overview.logIndexPattern: "fosstlsoc-logs-*,all-logs-*,soc-*,opensearch_dashboards_sample_data_tlsoc-security"
 
 # Set the value to true to enable the new UI for savedQueries in Discover
 # data.savedQueriesNewUI.enabled: true
@@ -424,7 +443,12 @@
 
 # Set the value to true to enable workspace feature
 # Please note, workspace will not work with multi-tenancy. To enable workspace feature, you need to disable multi-tenancy first with `opensearch_security.multitenancy.enabled: false`
-# workspace.enabled: true
+# ============ TLSOC Phase 5b — Task 5b.2 (decision D-014) ============
+# Workspace IS the TLSOC tenancy mechanism: 1 workspace = 1 organization; per-tenant saved-object
+# scoping rides the /w/{workspaceId}/ URL prefix (WorkspaceIdConsumerWrapper). This REQUIRES
+# opensearch_security.multitenancy.enabled: false, which is set explicitly (with its own load-bearing
+# warning) in the TLSOC security block later in this file — never enable multitenancy alongside this.
+workspace.enabled: true
 
 # explore.enabled: true
 
@@ -447,3 +471,88 @@
 # @experimental Enable legacy Elasticsearch backend compatibility.
 # This feature is currently being developed and should be used with caution in production environments.
 # backendCompatibility.enabled: false
+
+# === TLSOC Phase 0 — strip-down (disable, not delete) ===
+# apm_oss: non-security APM index-pattern + Home tutorial stub. No plugin depends on it.
+# Disabled (source retained) to prove the disable->verify-boot step before any deletion.
+apm_oss.enabled: false
+
+# === TLSOC Phase 0 — batch 2: visualization/charts cluster (disable, not delete) ===
+# Reversible runtime disable of non-security visualization apps. EXCLUDED (must stay enabled):
+# charts, visualizations, visDefaultEditor, visAugmenter (Discover/Explore depend on them via
+# requiredPlugins/requiredBundles), and maps_legacy/region_map/tile_map (strict schema rejects the
+# `enabled` key -> would crash boot; needs a schema edit first, deferred). Source retained throughout.
+# --- TEMPORARILY RE-ENABLED FOR DATA/VIZ TESTING (2026-06-22) ---
+# These 12 viz plugins were disabled in Phase 0. They are re-enabled (by commenting the disable lines)
+# ONLY so the sample-data dashboards + visualizations render and we can see how Discover/Visualize/Dashboards
+# work against real data. To restore the Phase-0 strip-down, simply UNCOMMENT the 12 lines below.
+# vis_type_markdown.enabled: false
+# vis_type_metric.enabled: false
+# vis_type_table.enabled: false
+# vis_type_tagcloud.enabled: false
+# vis_type_timeline.enabled: false
+# vis_type_timeseries.enabled: false
+# vis_type_vega.enabled: false
+# vis_type_vislib.enabled: false
+# vis_type_xy.enabled: false
+# visualize.enabled: false
+# vis_builder.enabled: false
+# input_control_vis.enabled: false
+
+# === TLSOC Phase 0 — batch 3: remaining non-security modules (disable, not delete) ===
+# Reversible runtime disable. EXCLUDED: usage_collection (Discover/Explore/data hard-require it).
+# Already inert (manifest renamed/absent, not discovered): telemetry*, newsfeed. agent_traces is left
+# untouched on purpose (already cascade-off via explore; keep the door open for SOC trace investigation).
+opensearch_dashboards_overview.enabled: false
+opensearch_dashboards_usage_collection.enabled: false
+legacy_export.enabled: false
+
+# === TLSOC Phase 1 — force dark mode (analyst-primary experience; reversible) ===
+# Locks theme:darkMode on so the v8.dark bundle (our recolored TLSOC theme) loads. Uses
+# uiSettings.overrides (schema.object unknowns:'allow', ui_settings_config.ts:59) — a lock, not a default.
+# TLSOC theme policy (2026-06-22): DEFAULT = LIGHT, manually switchable to dark, NO forced lock.
+# An earlier uiSettings.overrides entry forced theme:darkMode=on; it was intentionally removed so dark mode
+# now defaults to OFF (light) and is toggleable in Advanced Settings. NOTE: only theme:version "Next" (v8) is
+# TLSOC-recolored — v7 and v9 are untouched OUI defaults.
+# To FORCE dark again, restore:                 uiSettings.overrides: { "theme:darkMode": true }
+# To let each user pick from the top-nav menu:  theme:enableUserControl: true
+
+# === TLSOC Phase 2 — Task 2.1: enable the modern nav-group navigation engine (decision D-006) ===
+# The SOC tree (Overview/Alerts/Investigations/Cases/Detections/Threat Intel/Assets/Dashboards/Administration)
+# is built on OSD's nav-GROUP engine (CollapsibleNavGroupEnabled flyout), NOT the legacy category nav. That
+# engine is gated by the uiSetting `home:useNewHomePage` (default false; header.tsx:727 picks the renderer).
+# This is a REVERSIBLE probe via uiSettings.overrides (schema.object unknowns:'allow', ui_settings_config.ts:59 —
+# a lock, not a default). Once verified, a later task converts this to the source default in
+# src/plugins/home/server/ui_settings.ts so it's baked into the product (staged like Phase 0 disable->verify).
+# NOTE: this flag is a two-for-one — it also switches the top header bar to the updated variant (useUpdatedHeader).
+uiSettings.overrides:
+  "home:useNewHomePage": true
+
+# === TLSOC Phase 5 — Task 5a.1b: authentication via the OpenSearch Security stack (decision D-013) ===
+# The engine (container tlsoc-opensearch, named volume tlsoc-osdata) now runs with security ENABLED (demo config:
+# self-signed TLS certs + internal users). OSD connects over HTTPS as the `kibanaserver` SERVICE ACCOUNT (demo
+# default password — HARDEN AT PHASE 6 along with real certs and the dev admin password). End users authenticate
+# through the vendored security-dashboards-plugin (plugins/security-dashboards-plugin — a FROZEN TLSOC-owned
+# snapshot, see its TLSOC-VENDOR.md; decision D-013).
+opensearch.hosts: ["https://localhost:9200"]
+opensearch.username: "kibanaserver"
+opensearch.password: "kibanaserver"
+# Demo certs are self-signed → no verification in dev. Phase 6 (packaging) replaces demo certs and sets 'full'.
+opensearch.ssl.verificationMode: none
+# Forward the caller's credentials to the engine so asCurrentUser acts as the logged-in user (5a identity seam).
+opensearch.requestHeadersAllowlist: ["authorization", "securitytenant"]
+
+# ⚠️ LOAD-BEARING — DO NOT ENABLE MULTITENANCY. Written explicitly (not left to default) on purpose:
+# OS-Security multitenancy swaps saved-object indices per tenant and is INCOMPATIBLE with the OSD `workspace`
+# machinery (see the workspace note earlier in this file) — enabling it would silently FORECLOSE the Phase-5b
+# workspace-based tenancy option (the current front-runner, decision D-014 pending). With multitenancy false the
+# plugin never touches saved objects (verified from plugin source, journal "TASK 5a.1-PREFLIGHT" Q3).
+opensearch_security.multitenancy.enabled: false
+
+# Session cookie (encryption key must be 32+ chars; dev value — rotate at Phase 6).
+opensearch_security.cookie.password: "tlsoc-dev-cookie-encryption-key-2026-change-at-packaging"
+opensearch_security.cookie.secure: false
+
+# TLSOC login-page copy (the mark/wordmark already come from the Phase-1 branding config).
+opensearch_security.ui.basicauth.login.title: "Log in to TLSOC"
+opensearch_security.ui.basicauth.login.subtitle: "IITB Trust Lab Security Operations Center. If you have forgotten your username or password, contact your SOC administrator."

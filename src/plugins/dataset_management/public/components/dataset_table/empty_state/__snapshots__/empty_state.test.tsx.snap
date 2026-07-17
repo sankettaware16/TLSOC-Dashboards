@@ -13,7 +13,7 @@ exports[`EmptyState should render normally 1`] = `
         <EuiTitle>
           <h2>
             <FormattedMessage
-              defaultMessage="Ready to try OpenSearch Dashboards? First, you need data."
+              defaultMessage="Ready to try TLSOC? First, you need data."
               id="datasetManagement.createDataset.emptyState.noDataTitle"
               values={Object {}}
             />
@@ -35,7 +35,7 @@ exports[`EmptyState should render normally 1`] = `
             className="inpEmptyState__card"
             description={
               <FormattedMessage
-                defaultMessage="Load a data set and a OpenSearch Dashboards dashboard."
+                defaultMessage="Load a data set and a TLSOC dashboard."
                 id="datasetManagement.createDataset.emptyState.sampleDataCardDescription"
                 values={Object {}}
               />

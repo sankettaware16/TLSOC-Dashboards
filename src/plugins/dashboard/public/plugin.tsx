@@ -476,7 +476,8 @@ export class DashboardPlugin
     core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS['security-analytics'], [
       {
         id: app.id,
-        order: 400,
+        // TLSOC: position "Dashboards" after the SOC sections in the Security Operations nav.
+        order: 80,
         category: undefined,
         euiIconType: 'dashboardApp',
       },

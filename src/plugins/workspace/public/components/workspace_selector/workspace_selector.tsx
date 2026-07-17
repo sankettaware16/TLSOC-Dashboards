@@ -104,7 +104,12 @@ export const WorkspaceSelector = ({ coreStart, registeredUseCases$ }: Props) => 
       </EuiPanel>
     </div>
   ) : (
-    <EuiButton onClick={onButtonClick}>Select a Workspace</EuiButton>
+    <EuiButton onClick={onButtonClick}>
+      {/* TLSOC (5b.2c): upstream hardcoded this string with no i18n. */}
+      {i18n.translate('workspace.selector.selectWorkspaceButton', {
+        defaultMessage: 'Select a workspace',
+      })}
+    </EuiButton>
   );
 
   return (

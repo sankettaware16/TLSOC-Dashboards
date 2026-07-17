@@ -115,7 +115,7 @@ export const EmptyState = ({
               <h2>
                 <FormattedMessage
                   id="datasetManagement.createDataset.emptyState.noDataTitle"
-                  defaultMessage="Ready to try OpenSearch Dashboards? First, you need data."
+                  defaultMessage="Ready to try TLSOC? First, you need data."
                 />
               </h2>
             </EuiTitle>
@@ -159,7 +159,7 @@ export const EmptyState = ({
                 description={
                   <FormattedMessage
                     id="datasetManagement.createDataset.emptyState.sampleDataCardDescription"
-                    defaultMessage="Load a data set and a OpenSearch Dashboards dashboard."
+                    defaultMessage="Load a data set and a TLSOC dashboard."
                   />
                 }
               />

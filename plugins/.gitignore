@@ -2,3 +2,9 @@
 *
 # Except this file
 !.gitignore
+# TLSOC (D-013): the security-dashboards-plugin is a FROZEN VENDORED SNAPSHOT we own — track it.
+# (Its node_modules and build output stay ignored.)
+!security-dashboards-plugin/
+security-dashboards-plugin/node_modules/
+security-dashboards-plugin/build/
+security-dashboards-plugin/target/

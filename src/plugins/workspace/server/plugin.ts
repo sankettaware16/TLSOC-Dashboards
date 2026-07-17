@@ -201,7 +201,9 @@ export class WorkspacePlugin implements Plugin<WorkspacePluginSetup, WorkspacePl
             (workspace) => workspace.id === defaultWorkspaceId
           );
           // If user has a default workspace configured, go to overview page of that workspace
-          // If user has more than one workspaces, go to homepage
+          // TLSOC (Task 5b.2, C3 — human-approved): with multiple workspaces and no default,
+          // upstream sent users to /app/home (a generic homepage). TLSOC sends them to the
+          // branded workspace landing instead — it IS the organization picker.
           if (defaultWorkspace) {
             return response.redirected({
               headers: {
@@ -210,7 +212,7 @@ export class WorkspacePlugin implements Plugin<WorkspacePluginSetup, WorkspacePl
             });
           } else {
             return response.redirected({
-              headers: { location: `${basePath}/app/home` },
+              headers: { location: `${basePath}/app/${WORKSPACE_INITIAL_APP_ID}` },
             });
           }
         }

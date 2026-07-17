@@ -444,9 +444,11 @@ describe('Workspace server plugin', () => {
       const toolKitMock = httpServerMock.createToolkit();
 
       await registerOnPostAuthFn(request, response, toolKitMock);
+      // TLSOC (Task 5b.2, C3): multiple workspaces + no default now land on the branded
+      // workspace landing (the organization picker), not /app/home.
       expect(response.redirected).toBeCalledWith({
         headers: {
-          location: '/mock-server-basepath/app/home',
+          location: '/mock-server-basepath/app/workspace_initial',
         },
       });
     });

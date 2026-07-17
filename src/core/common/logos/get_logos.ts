@@ -9,21 +9,24 @@ import { ColorScheme, ImageType } from './constants';
 import { Branding } from '../../types';
 
 // The logos are stored at `src/core/server/core_app/assets/logos` to have a pretty URL
-export const OPENSEARCH_DASHBOARDS_THEMED = 'ui/logos/opensearch_dashboards.svg';
-export const OPENSEARCH_DASHBOARDS_ON_LIGHT = 'ui/logos/opensearch_dashboards_on_light.svg';
-export const OPENSEARCH_DASHBOARDS_ON_DARK = 'ui/logos/opensearch_dashboards_on_dark.svg';
-export const OPENSEARCH_THEMED = 'ui/logos/opensearch.svg';
-export const OPENSEARCH_ON_LIGHT = 'ui/logos/opensearch_on_light.svg';
-export const OPENSEARCH_ON_DARK = 'ui/logos/opensearch_on_dark.svg';
-export const MARK_THEMED = 'ui/logos/opensearch_mark.svg';
-export const MARK_ON_LIGHT = 'ui/logos/opensearch_mark_on_light.svg';
-export const MARK_ON_DARK = 'ui/logos/opensearch_mark_on_dark.svg';
-export const CENTER_MARK_THEMED = 'ui/logos/opensearch_center_mark.svg';
-export const CENTER_MARK_ON_LIGHT = 'ui/logos/opensearch_center_mark_on_light.svg';
-export const CENTER_MARK_ON_DARK = 'ui/logos/opensearch_center_mark_on_dark.svg';
-export const ANIMATED_MARK_THEMED = 'ui/logos/opensearch_spinner.svg';
-export const ANIMATED_MARK_ON_LIGHT = 'ui/logos/opensearch_spinner_on_light.svg';
-export const ANIMATED_MARK_ON_DARK = 'ui/logos/opensearch_spinner_on_dark.svg';
+// TLSOC: repointed the built-in default logos to our brand assets (was opensearch_*.svg). These defaults are
+// basePath-prepended in getLogos() below (`${serverBasePath}/${...}`), so they render under any basePath — unlike
+// custom branding config URLs, which are used verbatim. This is what lets us drop the --no-base-path dev flag.
+export const OPENSEARCH_DASHBOARDS_THEMED = 'ui/logos/tlsoc_logo_on_light.svg';
+export const OPENSEARCH_DASHBOARDS_ON_LIGHT = 'ui/logos/tlsoc_logo_on_light.svg';
+export const OPENSEARCH_DASHBOARDS_ON_DARK = 'ui/logos/tlsoc_logo_on_dark.svg';
+export const OPENSEARCH_THEMED = 'ui/logos/tlsoc_logo_on_light.svg';
+export const OPENSEARCH_ON_LIGHT = 'ui/logos/tlsoc_logo_on_light.svg';
+export const OPENSEARCH_ON_DARK = 'ui/logos/tlsoc_logo_on_dark.svg';
+export const MARK_THEMED = 'ui/logos/tlsoc_mark.svg';
+export const MARK_ON_LIGHT = 'ui/logos/tlsoc_mark.svg';
+export const MARK_ON_DARK = 'ui/logos/tlsoc_mark.svg';
+export const CENTER_MARK_THEMED = 'ui/logos/tlsoc_mark.svg';
+export const CENTER_MARK_ON_LIGHT = 'ui/logos/tlsoc_mark.svg';
+export const CENTER_MARK_ON_DARK = 'ui/logos/tlsoc_mark.svg';
+export const ANIMATED_MARK_THEMED = 'ui/logos/tlsoc_mark.svg';
+export const ANIMATED_MARK_ON_LIGHT = 'ui/logos/tlsoc_mark.svg';
+export const ANIMATED_MARK_ON_DARK = 'ui/logos/tlsoc_mark.svg';
 
 interface AssetOption {
   url?: string;

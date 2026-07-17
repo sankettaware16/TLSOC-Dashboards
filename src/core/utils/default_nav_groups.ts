@@ -4,7 +4,7 @@
  */
 
 import { i18n } from '@osd/i18n';
-import { ChromeNavGroup, NavGroupType } from '../types';
+import { ChromeNavGroup, NavGroupStatus, NavGroupType } from '../types';
 
 export enum UseCaseId {
   ALL_USE_CASE_ID = 'all',
@@ -56,6 +56,9 @@ const defaultNavGroups = {
     }),
     order: 3000,
     icon: 'wsAnalytics',
+    // TLSOC: hidden — TLSOC is a single-use-case product (Security Operations). Hiding the other
+    // use cases makes Security Operations the sole visible use case, so it auto-selects on boot.
+    status: NavGroupStatus.Hidden,
   },
   observability: {
     id: OBSERVABILITY_USE_CASE_ID,
@@ -68,15 +71,17 @@ const defaultNavGroups = {
     }),
     order: 4000,
     icon: 'wsObservability',
+    // TLSOC: hidden (single-use-case product — see the 'all' group note).
+    status: NavGroupStatus.Hidden,
   },
   'security-analytics': {
     id: SECURITY_ANALYTICS_USE_CASE_ID,
     title: i18n.translate('core.ui.group.security.analytics.title', {
-      defaultMessage: 'Security Analytics',
+      defaultMessage: 'Security Operations',
     }),
     description: i18n.translate('core.ui.group.security.analytics.description', {
       defaultMessage:
-        'Detect and investigate potential security threats and vulnerabilities across your systems and data.',
+        'Monitor, detect, and investigate security threats across your environment.',
     }),
     order: 5000,
     icon: 'wsSecurityAnalytics',
@@ -92,6 +97,8 @@ const defaultNavGroups = {
     }),
     order: 7000,
     icon: 'wsEssentials',
+    // TLSOC: hidden (single-use-case product — see the 'all' group note).
+    status: NavGroupStatus.Hidden,
   },
   search: {
     id: SEARCH_USE_CASE_ID,
@@ -104,6 +111,8 @@ const defaultNavGroups = {
     }),
     order: 6000,
     icon: 'wsSearch',
+    // TLSOC: hidden (single-use-case product — see the 'all' group note).
+    status: NavGroupStatus.Hidden,
   },
 } as const;
 

@@ -51,7 +51,7 @@ import { HttpConfigType } from '../http/http_config';
 import { SslConfig } from '../http/ssl_config';
 import { LoggerFactory } from '../logging';
 
-const DEFAULT_TITLE = 'OpenSearch Dashboards';
+const DEFAULT_TITLE = 'TLSOC';
 
 /** @internal */
 export class RenderingService {

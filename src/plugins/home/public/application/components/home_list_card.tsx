@@ -32,7 +32,7 @@ export const getLearnOpenSearchConfig = (docLinks: DocLinksStart): Config => ({
     {
       label: 'Quickstart guide',
       href: docLinks.links.opensearchDashboards.dashboards.quickStart,
-      description: 'Start using OpenSearch Dashboards in minutes.',
+      description: 'Start using TLSOC in minutes.',
     },
     {
       label: 'Building data visualizations',
@@ -64,7 +64,7 @@ export const getWhatsNewConfig = (docLinks: DocLinksStart): Config => ({
     {
       label: 'Quickstart guide',
       href: docLinks.links.opensearchDashboards.dashboards.quickStart,
-      description: 'Get started in minutes with OpenSearch Dashboards',
+      description: 'Get started in minutes with TLSOC',
     },
   ],
   allLink: (

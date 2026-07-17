@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- TLSOC placeholder brand mark (IITB Trust Lab). Replace with the official asset at this same path later. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-label="TLSOC">
+  <path d="M6 5 H26 A2 2 0 0 1 28 7 V14.5 C28 22 22.6 27.4 16 30 C9.4 27.4 4 22 4 14.5 V7 A2 2 0 0 1 6 5 Z" fill="#C266FF"/>
+  <path d="M8.5 15.5 H11.5 L13.5 11 L17 20 L19 15.5 H23.5" fill="none" stroke="#6D28D9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

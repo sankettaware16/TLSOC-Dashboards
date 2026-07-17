@@ -71,7 +71,11 @@ describe('WorkspaceUseCase', () => {
 
     expect(renderResult.getByText('Observability')).toBeInTheDocument();
     expect(renderResult.getByText('Essentials')).toBeInTheDocument();
-    expect(renderResult.getByText('Security Analytics')).toBeInTheDocument();
+    // TLSOC: the fork renames the security-analytics nav group to "Security Operations"
+    // (Phase 2, default_nav_groups.ts) — the fixture derives from DEFAULT_NAV_GROUPS, so the
+    // upstream literal 'Security Analytics' can never render here. Pre-existing failure,
+    // caught at 5b.2c (first full workspace-suite run).
+    expect(renderResult.getByText('Security Operations')).toBeInTheDocument();
     expect(renderResult.getByText('Search')).toBeInTheDocument();
   });
 

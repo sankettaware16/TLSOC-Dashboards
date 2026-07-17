@@ -15,6 +15,7 @@ import {
   WorkspacesSetup,
   DEFAULT_NAV_GROUPS,
   ALL_USE_CASE_ID,
+  NavGroupStatus,
 } from '../../../../core/public';
 import {
   WORKSPACE_DETAIL_APP_ID,
@@ -93,6 +94,10 @@ export class UseCaseService {
                   },
                 ]
               : []),
+            // TLSOC (5b.2c, human-decided 2026-07-15): the full upstream list STAYS — including
+            // Data sources, Datasets, and Sample data. The human explicitly wants sample-data
+            // loading (to exercise visualizations) and self-serve dataset/data-view creation
+            // inside workspaces. Do NOT trim these again.
             {
               id: 'dataSources',
               category: DEFAULT_APP_CATEGORIES.manageWorkspace,
@@ -153,7 +158,12 @@ export class UseCaseService {
             .getNavGroupsMap$()
             .pipe(
               map((navGroupsMap) => {
-                return Object.values(navGroupsMap).map(convertNavGroupToWorkspaceUseCase);
+                // TLSOC (Task 5b.2, D-014/C2): honor NavGroupStatus.Hidden — nav groups hidden by
+                // the fork (all/observability/essentials/search) must not become workspace use
+                // cases, otherwise the picker offers personas whose apps don't exist here.
+                return Object.values(navGroupsMap)
+                  .filter((navGroup) => navGroup.status !== NavGroupStatus.Hidden)
+                  .map(convertNavGroupToWorkspaceUseCase);
               })
             )
             .pipe(

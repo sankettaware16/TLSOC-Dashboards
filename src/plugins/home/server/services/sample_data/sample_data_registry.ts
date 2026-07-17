@@ -43,7 +43,6 @@ const compiledSampleDataSchema = Joi.object(sampleDataSchema);
 
 import { UsageCollectionSetup } from '../../../../usage_collection/server';
 import { ecommerceSpecProvider, flightsSpecProvider, logsSpecProvider } from './data_sets';
-import { otelSpecProvider } from './data_sets/otel';
 import { createInstallRoute, createListRoute } from './routes';
 import { createUninstallRoute } from './routes/uninstall';
 import { makeSampleDataUsageCollector, usage } from './usage';
@@ -51,15 +50,16 @@ import { makeSampleDataUsageCollector, usage } from './usage';
 const flightsSampleDataset = flightsSpecProvider();
 const logsSampleDataset = logsSpecProvider();
 const ecommerceSampleDataset = ecommerceSpecProvider();
-const otelSampleDataset = otelSpecProvider();
 
 export class SampleDataRegistry {
   constructor(private readonly initContext: PluginInitializerContext) {}
+  // TLSOC (2026-07-15, human-decided): the OTel observability sample dataset is removed —
+  // it has no place in a security product. The dataset code stays in data_sets/otel (unused);
+  // only the registration is dropped.
   private readonly sampleDatasets: SampleDatasetSchema[] = [
     flightsSampleDataset,
     logsSampleDataset,
     ecommerceSampleDataset,
-    otelSampleDataset,
   ];
 
   public setup(core: CoreSetup, usageCollections: UsageCollectionSetup | undefined) {

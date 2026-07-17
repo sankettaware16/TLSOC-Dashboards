@@ -1,0 +1,47 @@
+# TLSOC Dashboards — distribution config (OpenSearch edition).
+# Mounted into the tlsoc-dashboards container. Talks to the opensearch service over the demo TLS.
+
+server.host: "0.0.0.0"
+server.name: tlsoc-dashboards
+
+# --- TLSOC branding (logos/favicons are built-in source defaults; only title + header here) ---
+opensearchDashboards.branding:
+  applicationTitle: "TLSOC"
+  useExpandedHeader: false
+
+# --- the modern nav-group engine — REQUIRED for the SOC navigation tree (Phase 2, D-006) ---
+uiSettings.overrides:
+  "home:useNewHomePage": true
+
+# --- connection to OpenSearch (the tlsoc-dashboards container reaches it by service name) ---
+opensearch.hosts: ["https://opensearch:9200"]
+opensearch.username: "kibanaserver"
+opensearch.password: "kibanaserver"
+# DEMO certs → skip verification. For production: verificationMode full + provide the CA.
+opensearch.ssl.verificationMode: none
+opensearch.requestHeadersAllowlist: ["authorization", "securitytenant"]
+
+# --- TLSOC security stack (vendored security-dashboards-plugin) ---
+# Workspace-based tenancy (D-014); multitenancy MUST stay false alongside workspaces.
+opensearch_security.multitenancy.enabled: false
+opensearch_security.cookie.password: "CHANGE-THIS-32+char-cookie-encryption-key-for-tlsoc-prod"
+opensearch_security.cookie.secure: false
+opensearch_security.auth.type: "basicauth"
+opensearch_security.ui.basicauth.login.title: "Log in to TLSOC"
+opensearch_security.ui.basicauth.login.subtitle: "Security Operations Center. If you have forgotten your username or password, contact your SOC administrator."
+
+# --- multi-tenant workspaces + saved-object ACLs (Phase 5b) ---
+workspace.enabled: true
+savedObjects.permission.enabled: true
+opensearchDashboards.dashboardAdmin.users: ["admin", "tlsoc-super"]
+# backend role "admin" = TLSOC superuser → automatically a full dashboard admin.
+opensearchDashboards.dashboardAdmin.groups: ["admin"]
+
+# --- TLSOC Phase 0 strip-down (same reversible disables the dev config carries) ---
+apm_oss.enabled: false
+opensearch_dashboards_overview.enabled: false
+opensearch_dashboards_usage_collection.enabled: false
+legacy_export.enabled: false
+
+# --- TLSOC Overview cockpit: which indices hold the agentless pipeline's output ---
+tlsoc.overview.logIndexPattern: "fosstlsoc-logs-*,all-logs-*,soc-*"

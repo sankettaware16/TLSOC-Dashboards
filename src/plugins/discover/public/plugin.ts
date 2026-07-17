@@ -321,8 +321,13 @@ export class DiscoverPlugin
     core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS['security-analytics'], [
       {
         id: PLUGIN_ID,
+        // TLSOC: Discover is reframed as "Investigations" inside the Security Operations nav.
+        // The app id stays `discover` (deep links / saved objects key off it); only the label changes.
+        title: i18n.translate('discover.securityOperations.navTitle', {
+          defaultMessage: 'Investigations',
+        }),
         category: undefined,
-        order: 300,
+        order: 30,
         euiIconType: 'discoverApp',
       },
     ]);

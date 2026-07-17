@@ -1,0 +1,8 @@
+{
+  "id": "tlsoc",
+  "version": "opensearchDashboards",
+  "server": true,
+  "ui": true,
+  "requiredPlugins": ["data"],
+  "optionalPlugins": ["discover", "home"]
+}

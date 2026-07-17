@@ -10,6 +10,14 @@ export function createHistogramConfigs(
   histogramInterval: string,
   data: DataPublicPluginStart
 ) {
+  // TLSOC: a data view whose stored field cache lacks its own timeFieldName (e.g. created via
+  // the raw saved-objects API, or the index does not exist yet) used to fall through to the
+  // catch below, and showError() raises a GLOBAL toast that lingers for 5 minutes and re-fires
+  // on every fetch. There is no histogram to build without the time field — skip quietly.
+  if (!indexPattern.timeFieldName || !indexPattern.fields.getByName(indexPattern.timeFieldName)) {
+    return;
+  }
+
   const visStateAggs = [
     {
       type: 'count',
@@ -19,7 +27,7 @@ export function createHistogramConfigs(
       type: 'date_histogram',
       schema: 'segment',
       params: {
-        field: indexPattern.timeFieldName!,
+        field: indexPattern.timeFieldName,
         interval: histogramInterval,
         timeRange: data.query.timefilter.timefilter.getTime(),
       },

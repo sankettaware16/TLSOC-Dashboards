@@ -11,6 +11,7 @@ import {
   DEFAULT_APP_CATEGORIES,
   DEFAULT_NAV_GROUPS,
   NavGroupItemInMap,
+  NavGroupStatus,
   NavGroupType,
 } from '../../../../core/public';
 import { UseCaseService } from './use_case_service';
@@ -256,6 +257,26 @@ describe('UseCaseService', () => {
       ]);
     });
 
+    it('should exclude nav groups with Hidden status from use cases (TLSOC C2)', async () => {
+      const { useCaseStart, navGroupsMap$ } = setupUseCaseStart();
+      navGroupsMap$.next({
+        ...mockNavGroupsMap,
+        hiddenGroup: {
+          id: 'hiddenGroup',
+          title: 'Hidden Group',
+          description: 'A nav group hidden by the fork',
+          navLinks: [{ id: 'foo', title: 'Foo' }],
+          status: NavGroupStatus.Hidden,
+        },
+      });
+      const useCases = await useCaseStart.getRegisteredUseCases$().pipe(first()).toPromise();
+
+      expect(useCases.map((useCase) => useCase.id)).not.toContain('hiddenGroup');
+      expect(useCases.map((useCase) => useCase.id)).toEqual(
+        expect.arrayContaining(['observability', 'search', 'system'])
+      );
+    });
+
     it('should not emit after navGroupsMap$ emit same value', async () => {
       const { useCaseStart, navGroupsMap$ } = setupUseCaseStart();
       const registeredUseCases$ = useCaseStart.getRegisteredUseCases$();
@@ -281,9 +302,16 @@ describe('UseCaseService', () => {
     it('should move all use case to the last one', async () => {
       const { useCaseStart, navGroupsMap$ } = setupUseCaseStart();
 
+      // TLSOC: the fork sets DEFAULT_NAV_GROUPS.all to NavGroupStatus.Hidden and the C2 filter
+      // would drop it; clear the status here so this test keeps covering the sort behavior.
       navGroupsMap$.next({
         ...mockNavGroupsMap,
-        [ALL_USE_CASE_ID]: { ...DEFAULT_NAV_GROUPS.all, navLinks: [], order: -1 },
+        [ALL_USE_CASE_ID]: {
+          ...DEFAULT_NAV_GROUPS.all,
+          status: undefined,
+          navLinks: [],
+          order: -1,
+        },
       });
       let useCases = await useCaseStart.getRegisteredUseCases$().pipe(first()).toPromise();
 
@@ -295,7 +323,12 @@ describe('UseCaseService', () => {
       );
 
       navGroupsMap$.next({
-        [ALL_USE_CASE_ID]: { ...DEFAULT_NAV_GROUPS.all, navLinks: [], order: 1500 },
+        [ALL_USE_CASE_ID]: {
+          ...DEFAULT_NAV_GROUPS.all,
+          status: undefined,
+          navLinks: [],
+          order: 1500,
+        },
         ...mockNavGroupsMap,
       });
       useCases = await useCaseStart.getRegisteredUseCases$().pipe(first()).toPromise();

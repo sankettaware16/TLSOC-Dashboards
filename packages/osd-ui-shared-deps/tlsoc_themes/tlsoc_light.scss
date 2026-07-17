@@ -1,0 +1,36 @@
+/*!
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ *
+ * Modifications Copyright OpenSearch Contributors. See
+ * GitHub history for details.
+ */
+
+/*
+ * TLSOC light theme entry — token-layer.
+ * OUI's light base brand colors live as !default values in
+ * node_modules/@elastic/eui/src/themes/oui-next/global_styling/variables/_colors.scss
+ * (oui_next_colors_light.scss is intentionally empty), so we override them by setting
+ * BEFORE the global_styling import — the set-before-import value wins over the !default.
+ * Derived text/link/alias tokens recompute from these bases. Mirrors the dark entry's
+ * font-family + 6px radius overrides; OUI spacing + type scale stay unchanged.
+ * See journal Task: token-layer recompile.
+ */
+
+// TLSOC brand color overrides (override OUI light !default brand colors)
+$ouiColorPrimary: #7E22CE; // was OUI light #07827E
+$ouiColorSecondary: #059669; // was #017D73 (also success)
+$ouiColorAccent: #0284C7; // was #DD0A73
+
+// TLSOC token overrides (Inter UI font + 6px radius; $ouiBorderRadiusSmall auto-derives to 3px)
+$ouiFontFamily: #{"'Inter UI', 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol'"};
+$ouiBorderRadius: 6px;
+
+// Global styling (typography/size/borders/etc — OUI spacing + type scale unchanged this task)
+@import '@elastic/eui/src/themes/oui-next/global_styling/index';
+
+// Components
+@import '@elastic/eui/src/components/index';

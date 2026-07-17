@@ -12,9 +12,6 @@ import {
   HOME_PAGE_ID,
   SECTIONS,
   HOME_CONTENT_AREAS,
-  SEARCH_OVERVIEW_PAGE_ID,
-  OBSERVABILITY_OVERVIEW_PAGE_ID,
-  SECURITY_ANALYTICS_OVERVIEW_PAGE_ID,
 } from '../../../../plugins/content_management/public';
 import { getLearnOpenSearchConfig, registerHomeListCard } from './components/home_list_card';
 
@@ -52,7 +49,7 @@ export const setupHome = (contentManagement: ContentManagementPluginSetup) => {
       {
         id: SECTIONS.GET_STARTED,
         order: 1000,
-        title: "Get started with OpenSearch's powerful features",
+        title: "Get started with TLSOC's powerful features",
         kind: 'card',
         collapsible: true,
       },
@@ -65,11 +62,11 @@ export const initHome = (contentManagement: ContentManagementPluginStart, core: 
 
   if (!workspaceEnabled) {
     const useCases = [
-      { ...DEFAULT_NAV_GROUPS.observability, navigateAppId: OBSERVABILITY_OVERVIEW_PAGE_ID },
-      { ...DEFAULT_NAV_GROUPS.search, navigateAppId: SEARCH_OVERVIEW_PAGE_ID },
       {
+        // TLSOC is a single-use-case product: surface only Security Operations on the Home page,
+        // landing on our own Overview (not the external Security Analytics `sa_overview`, absent here).
         ...DEFAULT_NAV_GROUPS['security-analytics'],
-        navigateAppId: SECURITY_ANALYTICS_OVERVIEW_PAGE_ID,
+        navigateAppId: 'tlsoc_overview',
       },
     ];
 

@@ -1,0 +1,35 @@
+{
+  "policy": {
+    "description": "TLSOC log retention — delete fosstlsoc-logs-* indices once they age out. Default 90 days; tune min_index_age below for your retention requirement.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          {
+            "state_name": "delete",
+            "conditions": {
+              "min_index_age": "90d"
+            }
+          }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [
+          {
+            "delete": {}
+          }
+        ],
+        "transitions": []
+      }
+    ],
+    "ism_template": {
+      "index_patterns": [
+        "fosstlsoc-logs-*"
+      ],
+      "priority": 100
+    }
+  }
+}

@@ -52,7 +52,7 @@ import { ExclusiveUnion } from '@elastic/eui';
 import { combineLatest } from 'rxjs';
 import { HeaderExtension } from './header_extension';
 import { ChromeHelpExtension } from '../../chrome_service';
-import { GITHUB_CREATE_ISSUE_LINK } from '../../constants';
+import { TLSOC_BRANDING } from '../../tlsoc_branding';
 
 /** @public */
 export type ChromeHelpExtensionMenuGitHubLink = EuiButtonEmptyProps & {
@@ -167,7 +167,8 @@ class HeaderHelpMenuUI extends Component<Props, State> {
   }
 
   createGithubUrl = (labels: string[], title?: string) => {
-    const url = new URL('https://github.com/opensearch-project/OpenSearch-Dashboards/issues/new?');
+    // TLSOC: app-specific "report an issue" links target the TLSOC repo (see tlsoc_branding.ts).
+    const url = new URL(TLSOC_BRANDING.githubIssuesUrl);
 
     if (labels.length) {
       url.searchParams.set('labels', labels.join(','));
@@ -197,19 +198,13 @@ class HeaderHelpMenuUI extends Component<Props, State> {
   };
 
   public render() {
-    const {
-      intl,
-      opensearchDashboardsVersion,
-      useDefaultContent,
-      opensearchDashboardsDocLink,
-      surveyLink,
-      useUpdatedAppearance,
-    } = this.props;
-    const { helpExtension, helpSupportUrl } = this.state;
+    const { intl, useDefaultContent, surveyLink, useUpdatedAppearance } = this.props;
+    const { helpExtension } = this.state;
 
     const defaultContent = useDefaultContent ? (
       <Fragment>
-        <EuiButtonEmpty href={opensearchDashboardsDocLink} target="_blank" size="xs" flush="left">
+        {/* TLSOC: Help links point at the TLSOC repos (see tlsoc_branding.ts — the one place to edit). */}
+        <EuiButtonEmpty href={TLSOC_BRANDING.docsUrl} target="_blank" size="xs" flush="left">
           <FormattedMessage
             id="core.ui.chrome.headerGlobalNav.helpMenuOpenSearchDashboardsDocumentationTitle"
             defaultMessage="Documentation"
@@ -218,7 +213,16 @@ class HeaderHelpMenuUI extends Component<Props, State> {
 
         <EuiSpacer size="xs" />
 
-        <EuiButtonEmpty href={helpSupportUrl} target="_blank" size="xs" flush="left">
+        <EuiButtonEmpty href={TLSOC_BRANDING.engineUrl} target="_blank" size="xs" flush="left">
+          <FormattedMessage
+            id="core.ui.chrome.headerGlobalNav.helpMenuTlsocEngineTitle"
+            defaultMessage="Parsing engine"
+          />
+        </EuiButtonEmpty>
+
+        <EuiSpacer size="xs" />
+
+        <EuiButtonEmpty href={TLSOC_BRANDING.communityUrl} target="_blank" size="xs" flush="left">
           <FormattedMessage
             id="core.ui.chrome.headerGlobalNav.helpMenuAskOpenSearchTitle"
             defaultMessage="Community"
@@ -242,7 +246,7 @@ class HeaderHelpMenuUI extends Component<Props, State> {
         <EuiSpacer size="xs" />
 
         <EuiButtonEmpty
-          href={GITHUB_CREATE_ISSUE_LINK}
+          href={TLSOC_BRANDING.githubIssuesUrl}
           target="_blank"
           size="xs"
           iconType="logoGithub"
@@ -393,7 +397,7 @@ class HeaderHelpMenuUI extends Component<Props, State> {
               <FormattedMessage
                 id="core.ui.chrome.headerGlobalNav.helpMenuVersion"
                 defaultMessage="v {version}"
-                values={{ version: opensearchDashboardsVersion }}
+                values={{ version: TLSOC_BRANDING.version }}
               />
             </EuiFlexItem>
           </EuiFlexGroup>

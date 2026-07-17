@@ -10,7 +10,7 @@ exports[`WorkspaceInitial render workspace initial page normally when user is OS
       class="euiPageBody euiPageBody--borderRadiusNone"
     >
       <span
-        data-euiicon-type="logoOpenSearch"
+        data-euiicon-type="/ui/logos/tlsoc_mark.svg"
         style="position: fixed;"
       />
       <div
@@ -35,7 +35,7 @@ exports[`WorkspaceInitial render workspace initial page normally when user is OS
               <h1
                 class="euiTitle euiTitle--large"
               >
-                Welcome to OpenSearch
+                Welcome to TLSOC
               </h1>
             </div>
             <div
@@ -66,7 +66,7 @@ exports[`WorkspaceInitial render workspace initial page normally when user is OS
                   <div
                     class="euiText euiText--small"
                   >
-                    Collaborate on use-case based projects with workspaces. 
+                    Each organization works in its own isolated TLSOC workspace.
                   </div>
                 </div>
                 <div
@@ -627,66 +627,8 @@ exports[`WorkspaceInitial render workspace initial page normally when user is OS
               class="euiFlexItem euiFlexItem--flexGrowZero"
             >
               <div
-                class="euiFlexGroup euiFlexGroup--gutterMedium euiFlexGroup--justifyContentSpaceBetween euiFlexGroup--directionRow euiFlexGroup--responsive"
+                class="euiFlexGroup euiFlexGroup--gutterMedium euiFlexGroup--justifyContentFlexEnd euiFlexGroup--directionRow euiFlexGroup--responsive"
               >
-                <div
-                  class="euiFlexItem euiFlexItem--flexGrowZero"
-                >
-                  <div
-                    class="euiText euiText--small"
-                    style="display: flex; align-items: center;"
-                  >
-                    <span
-                      color="primary"
-                      data-euiicon-type="reporter"
-                    />
-                     
-                    <a
-                      class="euiLink euiLink--primary"
-                      href="https://opensearch.org/docs/mocked-test-branch/opensearch/index/"
-                      rel="noopener noreferrer"
-                      style="font-weight: normal;"
-                      target="_blank"
-                    >
-                      Learn more from documentation
-                      <span
-                        aria-label="External link"
-                        class="euiLink__externalIcon"
-                        data-euiicon-type="popout"
-                      />
-                      <span
-                        class="euiScreenReaderOnly"
-                      >
-                        (opens in a new tab or window)
-                      </span>
-                    </a>
-                    <span
-                      color="primary"
-                      data-euiicon-type="dashboardApp"
-                      style="margin-left: 16px;"
-                    />
-                     
-                    <a
-                      class="euiLink euiLink--primary"
-                      href="https://playground.opensearch.org/"
-                      rel="noopener noreferrer"
-                      style="font-weight: normal;"
-                      target="_blank"
-                    >
-                      Explore live demo environment at playground.opensearch.org
-                      <span
-                        aria-label="External link"
-                        class="euiLink__externalIcon"
-                        data-euiicon-type="popout"
-                      />
-                      <span
-                        class="euiScreenReaderOnly"
-                      >
-                        (opens in a new tab or window)
-                      </span>
-                    </a>
-                  </div>
-                </div>
                 <div
                   class="euiFlexItem euiFlexItem--flexGrowZero"
                 >
@@ -735,7 +677,7 @@ exports[`WorkspaceInitial render workspace initial page normally when user is no
       class="euiPageBody euiPageBody--borderRadiusNone"
     >
       <span
-        data-euiicon-type="logoOpenSearch"
+        data-euiicon-type="/ui/logos/tlsoc_mark.svg"
         style="position: fixed;"
       />
       <div
@@ -760,7 +702,7 @@ exports[`WorkspaceInitial render workspace initial page normally when user is no
               <h1
                 class="euiTitle euiTitle--large"
               >
-                Welcome to OpenSearch
+                Welcome to TLSOC
               </h1>
             </div>
             <div
@@ -791,7 +733,7 @@ exports[`WorkspaceInitial render workspace initial page normally when user is no
                   <div
                     class="euiText euiText--small"
                   >
-                    Collaborate on use-case based projects with workspaces. 
+                    Each organization works in its own isolated TLSOC workspace.
                   </div>
                 </div>
                 <div
@@ -1223,66 +1165,8 @@ exports[`WorkspaceInitial render workspace initial page normally when user is no
               class="euiFlexItem euiFlexItem--flexGrowZero"
             >
               <div
-                class="euiFlexGroup euiFlexGroup--gutterMedium euiFlexGroup--justifyContentSpaceBetween euiFlexGroup--directionRow euiFlexGroup--responsive"
+                class="euiFlexGroup euiFlexGroup--gutterMedium euiFlexGroup--justifyContentFlexEnd euiFlexGroup--directionRow euiFlexGroup--responsive"
               >
-                <div
-                  class="euiFlexItem euiFlexItem--flexGrowZero"
-                >
-                  <div
-                    class="euiText euiText--small"
-                    style="display: flex; align-items: center;"
-                  >
-                    <span
-                      color="primary"
-                      data-euiicon-type="reporter"
-                    />
-                     
-                    <a
-                      class="euiLink euiLink--primary"
-                      href="https://opensearch.org/docs/mocked-test-branch/opensearch/index/"
-                      rel="noopener noreferrer"
-                      style="font-weight: normal;"
-                      target="_blank"
-                    >
-                      Learn more from documentation
-                      <span
-                        aria-label="External link"
-                        class="euiLink__externalIcon"
-                        data-euiicon-type="popout"
-                      />
-                      <span
-                        class="euiScreenReaderOnly"
-                      >
-                        (opens in a new tab or window)
-                      </span>
-                    </a>
-                    <span
-                      color="primary"
-                      data-euiicon-type="dashboardApp"
-                      style="margin-left: 16px;"
-                    />
-                     
-                    <a
-                      class="euiLink euiLink--primary"
-                      href="https://playground.opensearch.org/"
-                      rel="noopener noreferrer"
-                      style="font-weight: normal;"
-                      target="_blank"
-                    >
-                      Explore live demo environment at playground.opensearch.org
-                      <span
-                        aria-label="External link"
-                        class="euiLink__externalIcon"
-                        data-euiicon-type="popout"
-                      />
-                      <span
-                        class="euiScreenReaderOnly"
-                      >
-                        (opens in a new tab or window)
-                      </span>
-                    </a>
-                  </div>
-                </div>
                 <div
                   class="euiFlexItem euiFlexItem--flexGrowZero"
                 >

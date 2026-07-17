@@ -37,7 +37,7 @@ export interface WorkspaceInitialProps {
 
 export const WorkspaceInitial = ({ registeredUseCases$ }: WorkspaceInitialProps) => {
   const {
-    services: { application, chrome, workspaces, http, docLinks },
+    services: { application, chrome, workspaces, http },
   } = useOpenSearchDashboards<CoreStart>();
   const isDashboardAdmin = !!application.capabilities.dashboards?.isDashboardAdmin;
   const availableUseCases = registeredUseCases$
@@ -150,7 +150,7 @@ export const WorkspaceInitial = ({ registeredUseCases$ }: WorkspaceInitialProps)
         <EuiTitle size="l">
           <h1>
             {i18n.translate('workspace.initial.title', {
-              defaultMessage: 'Welcome to OpenSearch',
+              defaultMessage: 'Welcome to TLSOC',
             })}
           </h1>
         </EuiTitle>
@@ -178,7 +178,7 @@ export const WorkspaceInitial = ({ registeredUseCases$ }: WorkspaceInitialProps)
             <EuiText size="s">
               {i18n.translate('workspace.initial.createWorkspace.describe', {
                 defaultMessage:
-                  'Collaborate on use-case based projects with workspaces. {hasWorkspace, select, true { Select a workspace to get started.} false {}}',
+                  'Each organization works in its own isolated TLSOC workspace.{hasWorkspace, select, true { Select your workspace to get started.} false {}}',
                 values: { hasWorkspace: workspaceList.length > 0 },
               })}
             </EuiText>
@@ -192,38 +192,9 @@ export const WorkspaceInitial = ({ registeredUseCases$ }: WorkspaceInitialProps)
         </EuiFlexGroup>
       </EuiFlexItem>
       <EuiFlexItem grow={false}>
-        <EuiFlexGroup justifyContent="spaceBetween" gutterSize="m">
-          <EuiFlexItem grow={false}>
-            <EuiText size="s" style={{ display: 'flex', alignItems: 'center' }}>
-              <EuiIcon type="reporter" size="s" color="primary" />
-              &nbsp;
-              <EuiLink
-                href={docLinks.links.opensearch.introduction}
-                target="_blank"
-                style={{ fontWeight: 'normal' }}
-              >
-                {i18n.translate('workspace.initial.link.documentation', {
-                  defaultMessage: 'Learn more from documentation',
-                })}
-              </EuiLink>
-              <EuiIcon
-                type="dashboardApp"
-                size="s"
-                color="primary"
-                style={{ marginLeft: '16px' }}
-              />
-              &nbsp;
-              <EuiLink
-                href="https://playground.opensearch.org/"
-                target="_blank"
-                style={{ fontWeight: 'normal' }}
-              >
-                {i18n.translate('workspace.initial.link.playground', {
-                  defaultMessage: 'Explore live demo environment at playground.opensearch.org',
-                })}
-              </EuiLink>
-            </EuiText>
-          </EuiFlexItem>
+        {/* TLSOC (Task 5b.2, D-014/C1): the upstream OpenSearch documentation and playground
+            links were removed here — this landing must carry TLSOC branding only. */}
+        <EuiFlexGroup justifyContent="flexEnd" gutterSize="m">
           <EuiFlexItem grow={false}>
             <EuiText size="s">
               <EuiLink
@@ -246,7 +217,7 @@ export const WorkspaceInitial = ({ registeredUseCases$ }: WorkspaceInitialProps)
   return (
     <EuiPage style={{ minHeight: '100vh' }}>
       <EuiPageBody>
-        <EuiIcon type="logoOpenSearch" size="xl" style={{ position: 'fixed' }} />
+        <EuiIcon type={chrome.logos.Mark.url} size="xl" style={{ position: 'fixed' }} />
         <EuiSpacer size="xl" />
         <EuiSpacer size="l" />
         <EuiFlexGroup
