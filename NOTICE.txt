@@ -277,3 +277,12 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+---
+TLSOC bundles a compact, offline catalog derived from MITRE ATT&CK® (v19.1,
+https://attack.mitre.org), used at src/plugins/tlsoc/common/mitre/attack_catalog.ts.
+
+MITRE ATT&CK® is a registered trademark of The MITRE Corporation.
+
+© 2026 The MITRE Corporation. This work is reproduced and distributed with the permission of
+The MITRE Corporation.
+
