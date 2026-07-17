@@ -27,3 +27,5 @@ export { buildMonitorForSave } from './save';
 export type { DetectionMode, DetectionRuleAttributes } from './save';
 export { deriveAliasName } from './alias';
 export { desiredExecutionTargets, executionTargetsDiffer } from './exec_targets';
+export { parseSigmaImport } from './sigma_import';
+export type { SigmaImportSuccess, SigmaImportFailure, MitreCatalogLookup } from './sigma_import';
