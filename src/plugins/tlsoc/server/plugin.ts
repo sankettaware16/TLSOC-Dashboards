@@ -15,6 +15,7 @@ import {
 } from './saved_objects';
 import { tlsocSecurityLogsSpecProvider } from './sample_data';
 import { TlsocConfigType } from './config';
+import { isOwnedTlsocDataViewTitle } from '../common/investigation/dv_match';
 
 export interface TlsocServerPluginSetupDeps {
   home?: HomeServerPluginSetup;
@@ -66,13 +67,18 @@ export class TlsocServerPlugin {
       .create<TlsocConfigType>()
       .pipe(first())
       .toPromise();
+    // PROB-2 WORKSPACE-FLOW fix: the data-view `_ensure` route's no-workspace orphan guard only
+    // applies when workspaces are actually enabled (mirrors data/server/plugin.ts:112's use of the
+    // same seam for ui-settings scoping).
+    const workspaceEnabled = core.workspace.isWorkspaceEnabled();
     registerDetectionRoutes(
       router,
       this.logger,
       core.http.auth,
       getSavedObjects,
       overview,
-      getIndexPatternsServiceFactory
+      getIndexPatternsServiceFactory,
+      workspaceEnabled
     );
     // "TLSOC Security Logs" sample dataset (interlude task, 2026-07-15) — appears on the
     // Sample data page (globally and inside workspaces) via home's registry.
@@ -80,9 +86,49 @@ export class TlsocServerPlugin {
     return {};
   }
 
-  public start(_core: CoreStart) {
+  public start(core: CoreStart) {
+    // PROB-2 WORKSPACE-FLOW fix: one-time hygiene sweep for the global (`workspaces:None`) orphan
+    // data views the ORIGINAL PROB-2 fix could create when `_ensure` ran outside a `/w/<id>/`
+    // context (e.g. an out-of-band call). Those orphans are invisible to `find()` inside every
+    // workspace (strict term-match on `workspaces`), so they're dead weight, not a fallback — safe
+    // to delete. Title-gated via `isOwnedTlsocDataViewTitle` so we only ever touch views this route
+    // itself creates, never a user's own data views. Fire-and-forget: must never delay or break
+    // boot, so every failure is caught and logged, never thrown.
+    if (core.workspace.isWorkspaceEnabled()) {
+      this.cleanupOrphanDataViews(core).catch((err) => {
+        this.logger.warn(`tlsoc: startup orphan data-view cleanup failed: ${err.message}`);
+      });
+    }
     return {};
   }
 
   public stop() {}
+
+  private async cleanupOrphanDataViews(core: CoreStart) {
+    try {
+      const repo = core.savedObjects.createInternalRepository();
+      const found = await repo.find<{ title?: string }>({ type: 'index-pattern', perPage: 10000 });
+      let deleted = 0;
+      for (const so of found.saved_objects) {
+        const isOwnedGlobalOrphan =
+          (!so.workspaces || so.workspaces.length === 0) &&
+          isOwnedTlsocDataViewTitle(so.attributes?.title ?? '');
+        if (!isOwnedGlobalOrphan) continue;
+        try {
+          await repo.delete('index-pattern', so.id);
+          deleted += 1;
+          this.logger.info(
+            `tlsoc: deleted orphan global data view "${so.attributes?.title}" (${so.id})`
+          );
+        } catch (err: any) {
+          this.logger.warn(`tlsoc: could not delete orphan data view ${so.id}: ${err.message}`);
+        }
+      }
+      if (deleted > 0) {
+        this.logger.info(`tlsoc: startup orphan data-view cleanup removed ${deleted} view(s)`);
+      }
+    } catch (err: any) {
+      this.logger.warn(`tlsoc: startup orphan data-view cleanup could not run: ${err.message}`);
+    }
+  }
 }

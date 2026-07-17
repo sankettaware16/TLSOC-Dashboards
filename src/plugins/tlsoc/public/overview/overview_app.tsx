@@ -29,6 +29,7 @@ import { CoreStart } from '../../../../core/public';
 import { OVERVIEW_WINDOWS, DEFAULT_OVERVIEW_WINDOW } from '../../common/overview/types';
 import { useOverview } from './use_overview';
 import { PristineState } from './components/pristine_state';
+import { SeedingState } from './components/seeding_state';
 import { LiveDashboard } from './components/live_dashboard';
 import { FilterBar, OverviewFilterState, EMPTY_FILTERS } from './components/filter_bar';
 import { OnboardingGuide } from './components/onboarding_guide';
@@ -54,13 +55,40 @@ export const OverviewApp: React.FC<OverviewAppProps> = ({ core }) => {
   const darkMode = Boolean(core.uiSettings.get('theme:darkMode'));
   const nowMs = Date.now();
 
-  // PROB-2 first-login coverage: seed the agentless pipeline's data view(s) once on mount, before
-  // the analyst ever opens a case's Investigate tab. Fire-and-forget — the request-scoped ensure
-  // route (server/routes/data_views.ts) is idempotent and self-tolerant of no-indices-yet.
+  // PROB-2 WORKSPACE-FLOW fix: track the mount-time seed of the agentless pipeline's data view(s)
+  // to completion instead of firing-and-forgetting it, so the branded SeedingState interstitial
+  // below can hold the page briefly rather than racing the analyst into a load that has nothing to
+  // resolve against yet. The client-side workspace-entry hook (`public/plugin.ts`) is the PRIMARY
+  // fix — it fires before this component even mounts — this is defense in depth + user feedback.
+  // Bounded retry (3 attempts, ~4s apart) covers a transient failure (e.g. a cold cluster) without
+  // ever trapping the user: `dataViewsReady` always eventually flips to true.
+  const [dataViewsReady, setDataViewsReady] = useState(false);
   useEffect(() => {
-    core.http
-      .post('/api/tlsoc/data_views/_ensure', { body: JSON.stringify({ perEndpoint: true }) })
-      .catch(() => {});
+    let cancelled = false;
+    const MAX_ATTEMPTS = 3;
+    const RETRY_DELAY_MS = 4000;
+
+    const attempt = (n: number) => {
+      core.http
+        .post('/api/tlsoc/data_views/_ensure', { body: JSON.stringify({ perEndpoint: true }) })
+        .then(() => {
+          if (!cancelled) setDataViewsReady(true);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          if (n < MAX_ATTEMPTS) {
+            setTimeout(() => attempt(n + 1), RETRY_DELAY_MS);
+          } else {
+            // Never trap the user behind a failed ensure — proceed regardless.
+            setDataViewsReady(true);
+          }
+        });
+    };
+    attempt(1);
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -150,7 +178,9 @@ export const OverviewApp: React.FC<OverviewAppProps> = ({ core }) => {
 
         {!live && <EuiSpacer size="l" />}
 
-        {loading && !vm && (
+        {!dataViewsReady && !vm && <SeedingState />}
+
+        {dataViewsReady && loading && !vm && (
           <EuiFlexGroup justifyContent="center" alignItems="center" style={{ minHeight: 240 }}>
             <EuiFlexItem grow={false}>
               <EuiLoadingSpinner size="xl" />

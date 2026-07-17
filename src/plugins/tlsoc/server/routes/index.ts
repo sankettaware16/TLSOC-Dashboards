@@ -19,7 +19,8 @@ export function registerDetectionRoutes(
   auth?: HttpAuth,
   getSavedObjects?: () => Promise<SavedObjectsServiceStart>,
   overview?: OverviewConfig,
-  getIndexPatternsServiceFactory?: GetIndexPatternsServiceFactory
+  getIndexPatternsServiceFactory?: GetIndexPatternsServiceFactory,
+  workspaceEnabled?: boolean
 ) {
   registerExecuteDetectionRoute(router, logger);
   // Overview aggregates the agentless log pipeline's output; read-only, asCurrentUser-scoped.
@@ -36,8 +37,10 @@ export function registerDetectionRoutes(
   registerCaseRoutes(router, logger, auth);
   // PROB-2: data-view bootstrap (request-scoped ensure, see data_views.ts) — a read-style route
   // like overview/GET-alerts, so it takes no role guard (any authenticated user may self-heal
-  // their own workspace's data views on Investigate/Overview).
+  // their own workspace's data views on Investigate/Overview). `overview` threads the configured
+  // log-index pattern for the base view's title; `workspaceEnabled` gates the no-workspace orphan
+  // guard (PROB-2 WORKSPACE-FLOW fix).
   if (getIndexPatternsServiceFactory) {
-    registerDataViewsRoutes(router, logger, getIndexPatternsServiceFactory);
+    registerDataViewsRoutes(router, logger, getIndexPatternsServiceFactory, overview, workspaceEnabled);
   }
 }

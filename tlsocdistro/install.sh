@@ -36,17 +36,30 @@ if ! docker image inspect "$TLSOC_DASHBOARDS_IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
-# ---- Start ----
-echo "[+] Starting the stack…"
-docker compose up -d
+# ---- Start (everything EXCEPT Logstash) ----
+# Logstash is held back deliberately: if it starts alongside OpenSearch it can index the first
+# events — creating per-endpoint indices with DYNAMIC (text) field mappings — BEFORE the ECS index
+# template is loaded, which then breaks aggregations like source.ip on the Overview. Load the
+# template + ISM first, THEN start Logstash so every fosstlsoc-logs-* index is born with correct
+# ECS types.
+echo "[+] Starting OpenSearch, Dashboards, and Kafka (Logstash starts after the template loads)…"
+docker compose up -d opensearch tlsoc-dashboards kafka
 
 # ---- Wait for OpenSearch, then load the log index template ----
 echo "[+] Waiting for OpenSearch to be ready…"
 until curl -sk -u "admin:${OPENSEARCH_ADMIN_PASSWORD}" https://localhost:9200 >/dev/null 2>&1; do sleep 5; done
 echo "[+] Loading the TLSOC log index template (correct ECS field types)…"
-curl -sk -u "admin:${OPENSEARCH_ADMIN_PASSWORD}" -H 'Content-Type: application/json' \
-  -X PUT "https://localhost:9200/_index_template/fosstlsoc-logs" \
-  --data-binary @opensearch/fosstlsoc-index-template.json >/dev/null && echo "    template loaded"
+# Retry + verify: the bare PUT used to swallow its response, so a transient failure (cluster still
+# settling right after the readiness probe) left indices to be created with dynamic text mappings.
+TPL_OK=""
+for attempt in 1 2 3 4 5 6; do
+  TPL_RESP=$(curl -sk -u "admin:${OPENSEARCH_ADMIN_PASSWORD}" -H 'Content-Type: application/json' \
+    -X PUT "https://localhost:9200/_index_template/fosstlsoc-logs" \
+    --data-binary @opensearch/fosstlsoc-index-template.json)
+  if echo "$TPL_RESP" | grep -q '"acknowledged":true'; then TPL_OK=yes; echo "    template loaded"; break; fi
+  echo "    template not accepted yet (attempt $attempt/6), retrying in 10s… (last: $TPL_RESP)"; sleep 10
+done
+[ -z "$TPL_OK" ] && { echo "    [!] index template FAILED to load — aborting before Logstash starts so indices don't get dynamic mappings. Last response: $TPL_RESP"; exit 1; }
 
 echo "[+] Loading the TLSOC log retention policy (ISM, 90d default)…"
 # The ISM plugin warms up AFTER the cluster reports ready — a PUT fired too early fails with an
@@ -67,6 +80,10 @@ done
 curl -sk -u "admin:${OPENSEARCH_ADMIN_PASSWORD}" -H 'Content-Type: application/json' \
   -X POST "https://localhost:9200/_plugins/_ism/add/fosstlsoc-logs-*" \
   -d '{"policy_id":"fosstlsoc-logs-retention"}' >/dev/null 2>&1 || true
+
+# ---- Now that the template + ISM are in place, start Logstash ----
+echo "[+] Starting Logstash (indices will now be created with correct ECS mappings)…"
+docker compose up -d logstash
 
 echo "--------------------------------------------------------------"
 echo " TLSOC Dashboards: http://${HOST_IP}:${DASHBOARDS_PORT}/"

@@ -64,3 +64,16 @@ export function findDataViewForIndex(
   }
   return best;
 }
+
+/**
+ * PROB-2 WORKSPACE-FLOW fix: a pure predicate identifying data-view TITLES that TLSOC's own
+ * `_ensure` route (`server/routes/data_views.ts`) owns — the base all-logs view
+ * (`fosstlsoc-logs-*`) and any per-endpoint view it derives (`fosstlsoc-logs-<slug>-*`).
+ * Deliberately does NOT match the other conventions `overview.logIndexPattern` tolerates
+ * (`all-logs-*`, `soc-*`) or any foreign title — those were never created by this route, so the
+ * startup orphan cleanup (`server/plugin.ts`) must never delete them even if it finds them
+ * workspace-less. Also used to scope the route's own per-endpoint bookkeeping.
+ */
+export function isOwnedTlsocDataViewTitle(title: string): boolean {
+  return title === 'fosstlsoc-logs-*' || /^fosstlsoc-logs-.+-\*$/.test(title);
+}

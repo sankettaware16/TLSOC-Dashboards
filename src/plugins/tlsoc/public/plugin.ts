@@ -4,6 +4,7 @@
  */
 
 import { i18n } from '@osd/i18n';
+import { Subscription } from 'rxjs';
 import {
   AppMountParameters,
   CoreSetup,
@@ -135,6 +136,12 @@ function buildSections(): SocSection[] {
  * the Security Operations nav group. The detection builder, cases, and investigations land here later.
  */
 export class TlsocPlugin {
+  /** Workspace ids the entry-seed hook has already fired `_ensure` for this session (see `start`).
+   * Defense-in-depth only — workspace switches are always hard page reloads (D-verified), so this
+   * Set never actually accumulates more than one entry in practice. */
+  private seededWorkspaceIds = new Set<string>();
+  private workspaceSeedSubscription?: Subscription;
+
   public setup(core: CoreSetup) {
     const sections = buildSections();
 
@@ -234,11 +241,35 @@ export class TlsocPlugin {
     return {};
   }
 
-  public start(_core: CoreStart) {
+  /**
+   * PROB-2 WORKSPACE-FLOW fix: the real banner fix. Seeds the agentless pipeline's data view(s) on
+   * every WORKSPACE ENTRY, regardless of which app (Overview / Alerts / Cases / Detections) the
+   * analyst opens first — the earlier fix only seeded from Overview's own mount effect, so any
+   * other app opened first left the workspace with zero data views. `core.workspaces` is on
+   * `CoreStart` (non-optional) and `currentWorkspaceId$` is already populated before any plugin's
+   * `start()` runs, so this subscription's first emission already carries the real id. `core.http`
+   * automatically carries the page's `/w/<id>/` prefix, so the POST lands scoped to that workspace
+   * — never global. Workspace switches are always hard page reloads (no client-side navigation
+   * between workspaces), so `seededWorkspaceIds` never actually needs to evict; it's defense in
+   * depth against a double-fire within one page's lifetime. Mirrors the precedent in
+   * `workspace/public/plugin.ts` (`_changeSavedObjectCurrentWorkspace`, ~L117-125): subscribe +
+   * guard + stored `Subscription`, unsubscribed in `stop()`.
+   */
+  public start(core: CoreStart) {
+    this.workspaceSeedSubscription = core.workspaces.currentWorkspaceId$.subscribe((id) => {
+      if (id && !this.seededWorkspaceIds.has(id)) {
+        this.seededWorkspaceIds.add(id);
+        core.http
+          .post('/api/tlsoc/data_views/_ensure', { body: JSON.stringify({ perEndpoint: true }) })
+          .catch(() => {});
+      }
+    });
     return {};
   }
 
-  public stop() {}
+  public stop() {
+    this.workspaceSeedSubscription?.unsubscribe();
+  }
 }
 
 export type TlsocSetup = ReturnType<TlsocPlugin['setup']>;

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { findDataViewForIndex, DataViewIdTitle } from './dv_match';
+import { findDataViewForIndex, DataViewIdTitle, isOwnedTlsocDataViewTitle } from './dv_match';
 
 const view = (id: string, title: string): DataViewIdTitle => ({ id, title });
 
@@ -69,5 +69,38 @@ describe('findDataViewForIndex', () => {
     expect(findDataViewForIndex(views, 'fosstlsoc[prod]-logs-2026.07.17')?.id).toBe('bracketed');
     // A different literal string that merely LOOKS like it could match a naive regex must not.
     expect(findDataViewForIndex(views, 'fosstlsocXprodX-logs-2026.07.17')).toBeUndefined();
+  });
+});
+
+describe('isOwnedTlsocDataViewTitle', () => {
+  it('matches the base all-logs view', () => {
+    expect(isOwnedTlsocDataViewTitle('fosstlsoc-logs-*')).toBe(true);
+  });
+
+  it('matches a per-endpoint view', () => {
+    expect(isOwnedTlsocDataViewTitle('fosstlsoc-logs-mailnile-*')).toBe(true);
+  });
+
+  it('matches a per-endpoint view whose slug itself contains hyphens', () => {
+    expect(isOwnedTlsocDataViewTitle('fosstlsoc-logs-web-server-01-*')).toBe(true);
+  });
+
+  it('does not match the other overview.logIndexPattern conventions', () => {
+    expect(isOwnedTlsocDataViewTitle('all-logs-*')).toBe(false);
+    expect(isOwnedTlsocDataViewTitle('soc-*')).toBe(false);
+  });
+
+  it('does not match unrelated or system titles', () => {
+    expect(isOwnedTlsocDataViewTitle('.kibana')).toBe(false);
+    expect(isOwnedTlsocDataViewTitle('other-*')).toBe(false);
+  });
+
+  it('does not match the empty string', () => {
+    expect(isOwnedTlsocDataViewTitle('')).toBe(false);
+  });
+
+  it('does not throw on regex-metacharacter-laden titles', () => {
+    expect(() => isOwnedTlsocDataViewTitle('fosstlsoc-logs-(evil)[.*+?]-*')).not.toThrow();
+    expect(() => isOwnedTlsocDataViewTitle('***')).not.toThrow();
   });
 });
