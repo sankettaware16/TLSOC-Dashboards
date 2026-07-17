@@ -7,9 +7,11 @@
 
 import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  EuiBadge,
   EuiBasicTable,
   EuiBasicTableColumn,
   EuiButton,
+  EuiButtonEmpty,
   EuiButtonIcon,
   EuiCallOut,
   EuiCode,
@@ -25,7 +27,12 @@ import {
 } from '@elastic/eui';
 import { CoreStart } from 'opensearch-dashboards/public';
 import { DataPublicPluginStart, getTime } from '../../../data/public';
-import { deriveInvestigationScope, planColumns } from '../../common/investigation';
+import {
+  buildEvidenceFilter,
+  deriveEvidence,
+  deriveInvestigationScope,
+  planColumns,
+} from '../../common/investigation';
 import { findDataViewForIndex } from '../../common/investigation/dv_match';
 import { HydratedAlert } from './use_cases';
 
@@ -100,6 +107,10 @@ function ExpandedDoc({ dv, hit }: { dv: any; hit: any }) {
 
 export function InvestigationTab({ core, data, alerts, alertsLoading }: Props) {
   const scope = useMemo(() => deriveInvestigationScope(alerts, Date.now()), [alerts]);
+  // PROB-17: scope the grid to the ACTUAL evidence behind the case's linked alerts (doc ids +
+  // bucket group-scopes), not just the whole derived time window.
+  const evidence = useMemo(() => deriveEvidence(alerts), [alerts]);
+  const evidenceFilter = useMemo(() => buildEvidenceFilter(evidence), [evidence]);
 
   const SearchBar = data.ui.SearchBar as any;
   const I18nContext = core.i18n.Context;
@@ -118,6 +129,10 @@ export function InvestigationTab({ core, data, alerts, alertsLoading }: Props) {
   const [errMsg, setErrMsg] = useState('');
   const [queriedWindow, setQueriedWindow] = useState<{ from: string; to: string } | null>(null);
   const [expandedRows, setExpandedRows] = useState<Record<string, ReactNode>>({});
+  // Default ON whenever there's evidence to scope to; re-derived once (per mount) after alerts
+  // hydrate, mirroring the `seeded` pattern below — afterwards the analyst owns the toggle.
+  const [scopedToEvidence, setScopedToEvidence] = useState(true);
+  const evidenceSeeded = useRef(false);
   const seeded = useRef(false);
   const colsInitialized = useRef(false);
   // PROB-2 self-heal: try the automatic ensure-and-retry at most ONCE per mount (avoid looping
@@ -134,6 +149,15 @@ export function InvestigationTab({ core, data, alerts, alertsLoading }: Props) {
       seeded.current = true;
     }
   }, [alertsLoading, scope]);
+
+  // Seed the evidence-scope toggle once alerts hydrate (ON iff there's evidence); afterwards the
+  // analyst owns it via the "Show full window" / "Scope to linked alerts" buttons below.
+  useEffect(() => {
+    if (!alertsLoading && !evidenceSeeded.current) {
+      setScopedToEvidence(evidenceFilter != null);
+      evidenceSeeded.current = true;
+    }
+  }, [alertsLoading, evidenceFilter]);
 
   // Resolve the case's index → data view; enumerate addable fields; seed the INITIAL columns from planColumns.
   useEffect(() => {
@@ -212,7 +236,10 @@ export function InvestigationTab({ core, data, alerts, alertsLoading }: Props) {
         ss.setField('from', pageIndex * PAGE_SIZE);
         ss.setField('query', query as any);
         const timeFilter = tf ? getTime(dv, timeRange) : undefined;
-        ss.setField('filter', timeFilter ? [timeFilter as any] : []);
+        ss.setField('filter', [
+          ...(timeFilter ? [timeFilter as any] : []),
+          ...(scopedToEvidence && evidenceFilter ? [evidenceFilter as any] : []),
+        ]);
         if (tf) ss.setField('sort', [{ [tf]: 'desc' }] as any);
 
         const resp: any = await ss.fetch();
@@ -243,7 +270,7 @@ export function InvestigationTab({ core, data, alerts, alertsLoading }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [dv, timeRange, query, pageIndex, data]);
+  }, [dv, timeRange, query, pageIndex, data, scopedToEvidence, evidenceFilter]);
 
   const onQuerySubmit = (payload: any) => {
     if (payload?.query) setQuery(payload.query);
@@ -420,6 +447,49 @@ export function InvestigationTab({ core, data, alerts, alertsLoading }: Props) {
               onQuerySubmit={onQuerySubmit}
             />
             <EuiSpacer size="m" />
+          </>
+        ) : null}
+
+        {evidenceFilter ? (
+          <>
+            <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false}>
+              <EuiFlexItem grow={false}>
+                {scopedToEvidence ? (
+                  <EuiBadge color="hollow">
+                    Scoped to the evidence behind this case&rsquo;s {alerts.length} linked alert
+                    {alerts.length === 1 ? '' : 's'}
+                  </EuiBadge>
+                ) : (
+                  <EuiText size="xs" color="subdued">
+                    Showing the full time window
+                  </EuiText>
+                )}
+              </EuiFlexItem>
+              <EuiFlexItem grow={false}>
+                {scopedToEvidence ? (
+                  <EuiButtonEmpty
+                    size="xs"
+                    onClick={() => {
+                      setScopedToEvidence(false);
+                      setPageIndex(0);
+                    }}
+                  >
+                    Show full window
+                  </EuiButtonEmpty>
+                ) : (
+                  <EuiButtonEmpty
+                    size="xs"
+                    onClick={() => {
+                      setScopedToEvidence(true);
+                      setPageIndex(0);
+                    }}
+                  >
+                    Scope to linked alerts
+                  </EuiButtonEmpty>
+                )}
+              </EuiFlexItem>
+            </EuiFlexGroup>
+            <EuiSpacer size="s" />
           </>
         ) : null}
 

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { deriveInvestigationScope } from './scope';
+import { buildEvidenceFilter, deriveEvidence, deriveInvestigationScope } from './scope';
 
 // Fixed instants so the tests are deterministic (nowMs is passed in, never read from the clock).
 const T_1000 = Date.UTC(2026, 4, 16, 10, 0, 0); // 2026-05-16T10:00:00Z
@@ -113,5 +113,129 @@ describe('deriveInvestigationScope — index selection (decision pinned here)', 
     expect(s.index).toBeUndefined();
     expect(s.timeRange.from).toBe(new Date(T_1000).toISOString());
     expect(s.timeRange.to).toBe(new Date(T_1002).toISOString());
+  });
+});
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const evAlert = (over: Record<string, unknown>): any => ({
+  relatedDocIds: [],
+  bucketKeys: undefined,
+  rule: null,
+  ...over,
+});
+
+describe('deriveEvidence — docRefs', () => {
+  it('unions + dedupes doc refs across alerts', () => {
+    const e = deriveEvidence([
+      evAlert({ relatedDocIds: ['a1|idx-a', 'a2|idx-a'] }),
+      evAlert({ relatedDocIds: ['a2|idx-a', 'a3|idx-b'] }),
+    ]);
+    expect(e.docRefs).toEqual([
+      { id: 'a1', index: 'idx-a' },
+      { id: 'a2', index: 'idx-a' },
+      { id: 'a3', index: 'idx-b' },
+    ]);
+  });
+
+  it('splits on the LAST pipe — a docId containing "|" is preserved intact', () => {
+    const e = deriveEvidence([evAlert({ relatedDocIds: ['weird|doc|id|idx-a'] })]);
+    expect(e.docRefs).toEqual([{ id: 'weird|doc|id', index: 'idx-a' }]);
+  });
+
+  it('entries with no parseable index (no pipe, or empty index) are skipped', () => {
+    const e = deriveEvidence([evAlert({ relatedDocIds: ['no-pipe-here', 'bare-id|'] })]);
+    expect(e.docRefs).toEqual([]);
+  });
+
+  it('empty input → empty docRefs', () => {
+    expect(deriveEvidence([]).docRefs).toEqual([]);
+  });
+});
+
+describe('deriveEvidence — groupScopes', () => {
+  it('bucket alert with bucketKeys + rule.groupBy zips into one AND-set', () => {
+    const e = deriveEvidence([
+      evAlert({
+        relatedDocIds: [],
+        bucketKeys: ['host-1', 'admin'],
+        rule: { ...ruleFor('idx'), groupBy: ['host.name', 'user.name'] },
+      }),
+    ]);
+    expect(e.groupScopes).toEqual([
+      [
+        { field: 'host.name', value: 'host-1' },
+        { field: 'user.name', value: 'admin' },
+      ],
+    ]);
+  });
+
+  it('alert with bucketKeys but no rule.groupBy is skipped', () => {
+    const e = deriveEvidence([evAlert({ bucketKeys: ['host-1'], rule: { ...ruleFor('idx'), groupBy: undefined } })]);
+    expect(e.groupScopes).toEqual([]);
+  });
+
+  it('alert with rule.groupBy but no bucketKeys is skipped', () => {
+    const e = deriveEvidence([evAlert({ bucketKeys: undefined, rule: { ...ruleFor('idx'), groupBy: ['host.name'] } })]);
+    expect(e.groupScopes).toEqual([]);
+  });
+
+  it('dedupes identical group-scope sets across alerts', () => {
+    const rule = { ...ruleFor('idx'), groupBy: ['host.name'] };
+    const e = deriveEvidence([
+      evAlert({ bucketKeys: ['host-1'], rule }),
+      evAlert({ bucketKeys: ['host-1'], rule }),
+    ]);
+    expect(e.groupScopes).toEqual([[{ field: 'host.name', value: 'host-1' }]]);
+  });
+
+  it('empty input → empty groupScopes', () => {
+    expect(deriveEvidence([]).groupScopes).toEqual([]);
+  });
+});
+
+describe('buildEvidenceFilter', () => {
+  it('returns null when both docRefs and groupScopes are empty', () => {
+    expect(buildEvidenceFilter({ docRefs: [], groupScopes: [] })).toBeNull();
+  });
+
+  it('golden shape: 2 indices + 1 bucket group-scope', () => {
+    const evidence = {
+      docRefs: [
+        { id: 'a1', index: 'idx-a' },
+        { id: 'a2', index: 'idx-a' },
+        { id: 'b1', index: 'idx-b' },
+      ],
+      groupScopes: [
+        [
+          { field: 'host.name', value: 'host-1' },
+          { field: 'user.name', value: 'admin' },
+        ],
+      ],
+    };
+    expect(buildEvidenceFilter(evidence)).toEqual({
+      meta: { alias: 'Linked alert evidence', disabled: false, negate: false, type: 'custom' },
+      query: {
+        bool: {
+          should: [
+            { bool: { filter: [{ term: { _index: 'idx-a' } }, { ids: { values: ['a1', 'a2'] } }] } },
+            { bool: { filter: [{ term: { _index: 'idx-b' } }, { ids: { values: ['b1'] } }] } },
+            {
+              bool: {
+                filter: [
+                  { term: { 'host.name': 'host-1' } },
+                  { term: { 'user.name': 'admin' } },
+                ],
+              },
+            },
+          ],
+          minimum_should_match: 1,
+        },
+      },
+    });
+  });
+
+  it('includes minimum_should_match when only docRefs are present', () => {
+    const result = buildEvidenceFilter({ docRefs: [{ id: 'a1', index: 'idx-a' }], groupScopes: [] });
+    expect(result?.query.bool.minimum_should_match).toBe(1);
   });
 });

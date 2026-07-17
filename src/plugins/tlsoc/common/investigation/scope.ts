@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { TlsocAlert } from '../alerts';
 
 /** The index + absolute time window a case's investigation surface (Task 4.5) is scoped to. */
@@ -78,4 +80,117 @@ function mostCommonIndex(alerts: Array<Pick<TlsocAlert, 'rule'>>): string | unde
 
 function iso(ms: number): string {
   return new Date(ms).toISOString();
+}
+
+/** The minimal shape of an alert {@link deriveEvidence} reads (a subset of {@link TlsocAlert}). */
+type EvidenceAlert = Pick<TlsocAlert, 'relatedDocIds' | 'bucketKeys' | 'rule'>;
+
+/**
+ * The concrete evidence (documents + bucket group-scopes) a case's linked alerts point at —
+ * used to scope the Investigate tab's query to what actually triggered the alerts, instead of
+ * the whole time window (PROB-17).
+ */
+export interface InvestigationEvidence {
+  /** Deduped union of (id, index) pairs from doc-level alerts' relatedDocIds. */
+  docRefs: Array<{ id: string; index: string }>;
+  /** One AND-set of exact field=value pairs per bucket (threshold) alert; deduped. */
+  groupScopes: Array<Array<{ field: string; value: string }>>;
+}
+
+/**
+ * Pure: derive {@link InvestigationEvidence} from a case's linked alerts.
+ *
+ * DOC REFS (decision — pinned by scope.test.ts): each alert's `relatedDocIds` entries are
+ * "docId|index" strings; the index is everything AFTER the LAST '|' (docId itself may contain
+ * '|'). Entries with no parseable index (no '|', or an empty index) are skipped. The result is
+ * deduped by (id, index) across ALL alerts.
+ *
+ * GROUP SCOPES (decision — pinned by scope.test.ts): bucket (threshold) alerts carry
+ * `bucketKeys` (values) and `rule.groupBy` (field names) — a positional zip in ONE AND-set per
+ * alert. An alert is skipped for group-scope purposes unless it has BOTH a non-empty
+ * `bucketKeys` AND a non-empty `rule.groupBy`. Pairs are zipped index-by-index; a pair where
+ * either side is missing (arrays of different length) is skipped, not the whole alert. Identical
+ * (fully matching) AND-sets are deduped.
+ */
+export function deriveEvidence(alerts: EvidenceAlert[]): InvestigationEvidence {
+  const docRefs: Array<{ id: string; index: string }> = [];
+  const seenDocRefs = new Set<string>();
+  for (const a of alerts) {
+    for (const raw of a.relatedDocIds ?? []) {
+      const sep = raw.lastIndexOf('|');
+      if (sep < 0) continue; // no parseable index
+      const id = raw.slice(0, sep);
+      const index = raw.slice(sep + 1);
+      if (!index) continue;
+      const key = `${id}|${index}`;
+      if (seenDocRefs.has(key)) continue;
+      seenDocRefs.add(key);
+      docRefs.push({ id, index });
+    }
+  }
+
+  const groupScopes: Array<Array<{ field: string; value: string }>> = [];
+  const seenGroupScopes = new Set<string>();
+  for (const a of alerts) {
+    const keys = a.bucketKeys;
+    const fields = a.rule?.groupBy;
+    if (!keys || keys.length === 0 || !fields || fields.length === 0) continue;
+    const pairs: Array<{ field: string; value: string }> = [];
+    const len = Math.min(keys.length, fields.length);
+    for (let i = 0; i < len; i++) {
+      const field = fields[i];
+      const value = keys[i];
+      if (field == null || value == null) continue; // either side missing — skip this pair only
+      pairs.push({ field, value });
+    }
+    if (pairs.length === 0) continue;
+    // Order-sensitive dedupe key — groupBy/bucketKeys are already positionally aligned.
+    const dedupeKey = pairs.map((p) => `${p.field}=${p.value}`).join('&');
+    if (seenGroupScopes.has(dedupeKey)) continue;
+    seenGroupScopes.add(dedupeKey);
+    groupScopes.push(pairs);
+  }
+
+  return { docRefs, groupScopes };
+}
+
+/**
+ * Pure: build a SearchSource-compatible custom filter that scopes a query to exactly the
+ * evidence behind a case's linked alerts, or `null` when there is no evidence to scope to.
+ *
+ * SHAPE (verified against this repo — see from_filters.ts:58-66 + search_source.ts:696): a
+ * filter carrying a raw `query` is passed through `buildQueryFromFilters` unmodified and merged
+ * with the SearchBar query into one bool by `buildOpenSearchQuery`. One `should` clause per
+ * INDEX (binds doc ids to their own index — a flat multi-index `ids` query would return
+ * colliding `_id`s from other indices), plus one `should` clause per bucket group-scope (an AND
+ * of exact `term` matches).
+ */
+export function buildEvidenceFilter(
+  evidence: InvestigationEvidence
+): { meta: any; query: any } | null {
+  if (evidence.docRefs.length === 0 && evidence.groupScopes.length === 0) return null;
+
+  const byIndex = new Map<string, string[]>();
+  for (const { id, index } of evidence.docRefs) {
+    const list = byIndex.get(index);
+    if (list) list.push(id);
+    else byIndex.set(index, [id]);
+  }
+
+  const should: any[] = [];
+  for (const [index, ids] of byIndex) {
+    should.push({
+      bool: { filter: [{ term: { _index: index } }, { ids: { values: ids } }] },
+    });
+  }
+  for (const pairs of evidence.groupScopes) {
+    should.push({
+      bool: { filter: pairs.map((p) => ({ term: { [p.field]: p.value } })) },
+    });
+  }
+
+  return {
+    meta: { alias: 'Linked alert evidence', disabled: false, negate: false, type: 'custom' },
+    query: { bool: { should, minimum_should_match: 1 } },
+  };
 }
