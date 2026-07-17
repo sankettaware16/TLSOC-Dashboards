@@ -36,7 +36,12 @@ class RouteError extends Error {
 }
 
 type EsClient = any;
-type SaveBody = { mode: 'stateful' | 'stateless'; rule: Record<string, unknown> };
+type SaveBody = {
+  mode: 'stateful' | 'stateless';
+  rule: Record<string, unknown>;
+  /** PROB-19: create/update-time enable state. Absent → default true (create) or "keep current" (update). */
+  enabled?: boolean;
+};
 
 /**
  * Resolve an index PATTERN to its current concrete index names via `cat.indices` — same idiom as
@@ -258,9 +263,14 @@ const bodyValidation = {
   body: schema.object({
     mode: schema.oneOf([schema.literal('stateful'), schema.literal('stateless')]),
     rule: schema.object({}, { unknowns: 'allow' }),
+    enabled: schema.maybe(schema.boolean()),
   }),
 };
 const idParam = { params: schema.object({ soId: schema.string() }) };
+const toggleValidation = {
+  params: schema.object({ soId: schema.string() }),
+  body: schema.object({ enabled: schema.boolean() }),
+};
 
 /** Register all detection-monitor management routes (create / list / get / update / delete). */
 export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: HttpAuth) {
@@ -270,7 +280,7 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
     if (!callerHasAnyRole(request, auth, DETECTION_WRITERS)) {
       return forbidden(response, 'create detections');
     }
-    const { mode, rule } = request.body as SaveBody;
+    const { mode, rule, enabled } = request.body as SaveBody;
     const soClient = context.core.savedObjects.client;
     const esClient = context.core.opensearch.client.asCurrentUser;
     const name = ((rule as any).name as string)?.trim() || 'Untitled detection';
@@ -287,6 +297,8 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
         });
       }
       ({ monitor, executionAlias, executionTargets } = await prepareMonitor(esClient, logger, mode, rule));
+      // Compiler always emits `enabled: true` — apply the caller's intent (default true) here.
+      monitor.enabled = enabled ?? true;
     } catch (err) {
       if (err instanceof RouteError) {
         return response.customError({ statusCode: err.statusCode, body: { message: err.message } });
@@ -322,6 +334,7 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
         rule: (rule as unknown) as RuleDefinition | ThresholdRuleDefinition,
         ...(executionAlias ? { executionAlias } : {}),
         ...(executionTargets ? { executionTargets } : {}),
+        enabled: enabled ?? true,
         createdAt: new Date().toISOString(),
       });
       return response.ok({ body: { id: monitorId, soId: so.id, name, executionAlias } });
@@ -342,20 +355,51 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
   // LIST — GET /api/tlsoc/detection/monitors
   router.get({ path: '/api/tlsoc/detection/monitors', validate: false }, async (context, request, response) => {
     const soClient = context.core.savedObjects.client;
+    const esClient = context.core.opensearch.client.asCurrentUser;
     try {
       const found = await soClient.find<DetectionRuleAttributes>({ type: TYPE, perPage: 1000 });
-      const rules = found.saved_objects
-        .map((so) => ({
-          soId: so.id,
-          name: so.attributes.name,
-          mode: so.attributes.mode,
-          severity: so.attributes.severity,
-          index: so.attributes.rule?.index,
-          executionAlias: so.attributes.executionAlias,
-          monitorId: so.attributes.monitorId,
-          createdAt: so.attributes.createdAt,
-        }))
-        .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+      const rules = found.saved_objects.map((so) => ({
+        soId: so.id,
+        name: so.attributes.name,
+        mode: so.attributes.mode,
+        severity: so.attributes.severity,
+        index: so.attributes.rule?.index,
+        executionAlias: so.attributes.executionAlias,
+        monitorId: so.attributes.monitorId,
+        enabled: so.attributes.enabled ?? true,
+        createdAt: so.attributes.createdAt,
+      }));
+
+      // Best-effort live reconciliation: the SO's `enabled` can drift from the monitor's actual
+      // state (e.g. someone toggled it directly in Alerting). Live wins when we can read it;
+      // any failure here must never fail the list request — the SO values just stand.
+      try {
+        const monitorIds = rules.map((r) => r.monitorId).filter((id): id is string => !!id);
+        if (monitorIds.length > 0) {
+          const searchResp = await esClient.transport.request({
+            method: 'POST',
+            path: `${MONITOR_API}/_search`,
+            body: {
+              query: { ids: { values: monitorIds } },
+              _source: { includes: ['monitor.enabled'] },
+            },
+          });
+          const hits: any[] = (searchResp as any).body?.hits?.hits ?? [];
+          const liveEnabled = new Map<string, boolean>();
+          hits.forEach((hit) => {
+            const val = hit?._source?.monitor?.enabled;
+            if (typeof val === 'boolean') liveEnabled.set(hit._id, val);
+          });
+          rules.forEach((r) => {
+            const live = liveEnabled.get(r.monitorId);
+            if (typeof live === 'boolean') r.enabled = live;
+          });
+        }
+      } catch (err) {
+        logger.warn(`tlsoc list: live enabled-state reconciliation skipped: ${err.message}`);
+      }
+
+      rules.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
       return response.ok({ body: { rules } });
     } catch (err) {
       if (isWorkspaceAccessError(err)) return workspaceForbidden(response);
@@ -380,6 +424,7 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
           rule: a.rule,
           monitorId: a.monitorId,
           executionAlias: a.executionAlias,
+          enabled: a.enabled ?? true,
         },
       });
     } catch (err) {
@@ -398,7 +443,7 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
       if (!callerHasAnyRole(request, auth, DETECTION_WRITERS)) {
         return forbidden(response, 'edit detections');
       }
-      const { mode, rule } = request.body as SaveBody;
+      const { mode, rule, enabled } = request.body as SaveBody;
       const { soId } = request.params as { soId: string };
       const soClient = context.core.savedObjects.client;
       const esClient = context.core.opensearch.client.asCurrentUser;
@@ -412,6 +457,10 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
         return response.notFound({ body: { message: `Detection ${soId} not found.` } });
       }
       const monitorId = existing.attributes.monitorId;
+      // THE TRAP: `prepareMonitor`'s compiler always emits `enabled: true` — without this, saving an
+      // edit to a currently-DISABLED rule would silently re-enable it. Preserve the existing SO's
+      // enabled state unless the caller explicitly passed one.
+      const nextEnabled = enabled ?? existing.attributes.enabled ?? true;
 
       let monitor: Record<string, any>;
       let executionAlias: string | undefined;
@@ -425,6 +474,7 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
           });
         }
         ({ monitor, executionAlias, executionTargets } = await prepareMonitor(esClient, logger, mode, rule));
+        monitor.enabled = nextEnabled;
       } catch (err) {
         if (err instanceof RouteError) {
           return response.customError({ statusCode: err.statusCode, body: { message: err.message } });
@@ -466,6 +516,7 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
             rule: (rule as unknown) as RuleDefinition | ThresholdRuleDefinition,
             ...(executionAlias ? { executionAlias } : {}),
             ...(executionTargets ? { executionTargets } : {}),
+            enabled: nextEnabled,
             createdAt: existing.attributes.createdAt,
           },
           { id: soId, overwrite: true }
@@ -488,6 +539,70 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
         return response.customError({
           statusCode: 500,
           body: { message: `Could not record the updated rule; the monitor was reverted: ${err.message}` },
+        });
+      }
+    }
+  );
+
+  // TOGGLE — POST /api/tlsoc/detection/monitors/{soId}/_toggle (PROB-19: enable/disable without a
+  // full edit round-trip). Same GET-then-PUT-with-concurrency idiom as UPDATE's monitor write, but
+  // touches only `enabled` — the rest of the monitor body is left exactly as Alerting has it.
+  router.post(
+    { path: '/api/tlsoc/detection/monitors/{soId}/_toggle', validate: toggleValidation },
+    async (context, request, response) => {
+      if (!callerHasAnyRole(request, auth, DETECTION_WRITERS)) {
+        return forbidden(response, 'toggle detections');
+      }
+      const { soId } = request.params as { soId: string };
+      const { enabled } = request.body as { enabled: boolean };
+      const soClient = context.core.savedObjects.client;
+      const esClient = context.core.opensearch.client.asCurrentUser;
+
+      let so;
+      try {
+        so = await soClient.get<DetectionRuleAttributes>(TYPE, soId);
+      } catch (err) {
+        return response.notFound({ body: { message: `Detection ${soId} not found.` } });
+      }
+      const monitorId = so.attributes.monitorId;
+
+      try {
+        const cur = await esClient.transport.request({ method: 'GET', path: `${MONITOR_API}/${monitorId}` });
+        const monitor = (cur as any).body?.monitor;
+        if (!monitor) throw new Error('Alerting returned no monitor body');
+        const seqNo = (cur as any).body?._seq_no;
+        const primaryTerm = (cur as any).body?._primary_term;
+        monitor.enabled = enabled;
+        await esClient.transport.request({
+          method: 'PUT',
+          path: `${MONITOR_API}/${monitorId}`,
+          body: monitor,
+          querystring: { refresh: 'wait_for', if_seq_no: seqNo, if_primary_term: primaryTerm },
+        });
+      } catch (err) {
+        logger.error(`tlsoc toggle: monitor PUT failed: ${err.message}`);
+        return response.customError({
+          statusCode: err.meta?.statusCode ?? 500,
+          body: { message: `Could not ${enabled ? 'enable' : 'disable'} the detection: ${err.message}` },
+        });
+      }
+
+      try {
+        await soClient.create<DetectionRuleAttributes>(
+          TYPE,
+          { ...so.attributes, enabled },
+          { id: soId, overwrite: true }
+        );
+        return response.ok({ body: { enabled } });
+      } catch (err) {
+        logger.error(`tlsoc toggle: SO write failed for ${soId}: ${err.message}`);
+        return response.customError({
+          statusCode: 500,
+          body: {
+            message: `The monitor was ${
+              enabled ? 'enabled' : 'disabled'
+            }, but recording it failed: ${err.message}`,
+          },
         });
       }
     }

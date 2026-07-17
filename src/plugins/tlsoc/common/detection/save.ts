@@ -66,6 +66,12 @@ export interface DetectionRuleAttributes {
    * and for rules saved before the WS hotfix (until their next sync/edit).
    */
   executionTargets?: string[];
+  /**
+   * Mirrors the Alerting monitor's `enabled` flag (PROB-19). ABSENT means `true` — rules saved
+   * before v1.2 had no notion of disable, so a missing value is "always was enabled". Unmapped SO
+   * attribute (round-trips via `_source`), same zero-migration idiom as `executionTargets`.
+   */
+  enabled?: boolean;
   /** ISO-8601 timestamp the rule was saved. */
   createdAt: string;
 }
