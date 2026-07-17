@@ -189,6 +189,108 @@ describe('normalizeAlert', () => {
       expect(alert.parentBucketPath).toBeUndefined();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // WS-18 (PROB-18): live GET /_plugins/_alerting/monitors/alerts fixture — bucket data nests
+  // under agg_alert_content, never at the top level.
+  // -------------------------------------------------------------------------
+  describe('agg_alert_content (live bucket-alert response shape, WS-18)', () => {
+    const rawBucketAlert = {
+      id: 'JNKZcZ8BxjOJSPnTUcrh',
+      version: 1,
+      monitor_id: 'c9KUcZ8BxjOJSPnTwMkL',
+      monitor_name: 'SSH brute force >3 in 5m per IP',
+      trigger_name: 'SSH brute force >3 in 5m per IP threshold breached',
+      finding_ids: [],
+      related_doc_ids: [],
+      state: 'COMPLETED',
+      error_message: null,
+      severity: '1',
+      start_time: 1784317301212,
+      last_notification_time: 1784317301212,
+      end_time: 1784317900911,
+      acknowledged_time: null,
+      agg_alert_content: {
+        parent_bucket_path: 'tlsoc_groups',
+        bucket_keys: ['10.8.0.10'],
+        bucket: {
+          doc_count: 14,
+          key: { source_ip: '10.8.0.10' },
+        },
+      },
+    };
+
+    it('bucketKeys comes from the nested agg_alert_content.bucket_keys', () => {
+      const alert = normalizeAlert(rawBucketAlert);
+      expect(alert.bucketKeys).toEqual(['10.8.0.10']);
+    });
+
+    it('parentBucketPath comes from the nested agg_alert_content.parent_bucket_path', () => {
+      const alert = normalizeAlert(rawBucketAlert);
+      expect(alert.parentBucketPath).toBe('tlsoc_groups');
+    });
+
+    it('bucketDocCount is populated from agg_alert_content.bucket.doc_count', () => {
+      const alert = normalizeAlert(rawBucketAlert);
+      expect(alert.bucketDocCount).toBe(14);
+    });
+
+    it('bucketKeyMap is populated from agg_alert_content.bucket.key', () => {
+      const alert = normalizeAlert(rawBucketAlert);
+      expect(alert.bucketKeyMap).toEqual({ source_ip: '10.8.0.10' });
+    });
+
+    it('nested agg_alert_content wins over a conflicting top-level bucket_keys', () => {
+      const alert = normalizeAlert({ ...rawBucketAlert, bucket_keys: 'should-be-ignored' });
+      expect(alert.bucketKeys).toEqual(['10.8.0.10']);
+    });
+
+    it('top-level bucket_keys still lands when agg_alert_content is absent', () => {
+      const alert = normalizeAlert({ ...rawAlert, bucket_keys: ['66.66.66.66'] });
+      expect(alert.bucketKeys).toEqual(['66.66.66.66']);
+    });
+
+    it('doc-level alert (no agg_alert_content) is unchanged: no bucket fields at all', () => {
+      const alert = normalizeAlert(rawAlert);
+      expect(alert.bucketKeys).toBeUndefined();
+      expect(alert.parentBucketPath).toBeUndefined();
+      expect(alert.bucketDocCount).toBeUndefined();
+      expect(alert.bucketKeyMap).toBeUndefined();
+    });
+
+    it('CSV-string fallback (non-list-API context) still parses via the top-level path', () => {
+      const alert = normalizeAlert({ ...rawAlert, bucket_keys: '66.66.66.66, 77.77.77.77' });
+      expect(alert.bucketKeys).toEqual(['66.66.66.66', '77.77.77.77']);
+    });
+
+    it('bucketDocCount absent-safe: non-numeric doc_count is dropped, not coerced', () => {
+      const alert = normalizeAlert({
+        ...rawBucketAlert,
+        agg_alert_content: {
+          ...rawBucketAlert.agg_alert_content,
+          bucket: { doc_count: 'NaN-ish', key: {} },
+        },
+      });
+      expect(alert.bucketDocCount).toBeUndefined();
+    });
+
+    it('bucketKeyMap absent-safe: non-object bucket.key is dropped, not coerced', () => {
+      const alert = normalizeAlert({
+        ...rawBucketAlert,
+        agg_alert_content: {
+          ...rawBucketAlert.agg_alert_content,
+          bucket: { doc_count: 14, key: ['not', 'an', 'object'] },
+        },
+      });
+      expect(alert.bucketKeyMap).toBeUndefined();
+    });
+
+    it('bucketDocCount/bucketKeyMap absent on a plain doc-level alert', () => {
+      const alert = normalizeAlert(rawAlert);
+      expect(alert.bucketDocCount).toBeUndefined();
+      expect(alert.bucketKeyMap).toBeUndefined();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

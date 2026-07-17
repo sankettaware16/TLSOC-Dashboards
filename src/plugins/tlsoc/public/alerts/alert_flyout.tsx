@@ -26,6 +26,7 @@ import {
   EuiToolTip,
 } from '@elastic/eui';
 import { CoreStart } from 'opensearch-dashboards/public';
+import { compositeSourceName } from '../../common/detection/internal';
 import {
   TlsocAlert,
   buildBucketContext,
@@ -68,12 +69,20 @@ interface HighlightRow {
 }
 
 /** Doc-level: the default set ∪ rule.investigationFields, values via the dot-path getter, hiding
- *  missing values. Bucket-level: rule.groupBy zipped positionally with alert.bucketKeys. */
+ *  missing values. Bucket-level: rule.groupBy zipped against alert.bucketKeyMap by NAME
+ *  (compositeSourceName(field) — WS-18) when available, else positionally against bucketKeys. */
 function buildHighlightRows(alert: TlsocAlert, doc?: Record<string, unknown>): HighlightRow[] {
   if (alert.bucketKeys && alert.bucketKeys.length > 0) {
     const groupBy = alert.rule?.groupBy ?? [];
     return alert.bucketKeys
-      .map((value, i) => ({ field: groupBy[i] ?? `group key ${i + 1}`, value }))
+      .map((value, i) => {
+        const field = groupBy[i];
+        const named = field ? alert.bucketKeyMap?.[compositeSourceName(field)] : undefined;
+        return {
+          field: field ?? `group key ${i + 1}`,
+          value: named !== undefined && named !== null ? String(named) : value,
+        };
+      })
       .filter((r) => r.value !== undefined && r.value !== null && r.value !== '');
   }
   if (!doc) return [];
@@ -162,7 +171,7 @@ export function AlertFlyout({
   const badges = useMemo(() => mitreBadges(alert.rule?.threat), [alert.rule]);
 
   const runbookContext = isBucket
-    ? buildBucketContext(alert.rule?.groupBy ?? [], alert.bucketKeys ?? [])
+    ? buildBucketContext(alert.rule?.groupBy ?? [], alert.bucketKeys ?? [], alert.bucketKeyMap)
     : firstDoc;
   const runbookMarkdown = alert.rule?.note
     ? substituteFieldPlaceholders(alert.rule.note, runbookContext)
@@ -408,6 +417,10 @@ export function AlertFlyout({
               title: 'Error',
               description: alert.errorMessage ?? '—',
             },
+            // WS-18: bucket alerts only — the group's doc_count in the trigger window.
+            ...(isBucket && alert.bucketDocCount !== undefined
+              ? [{ title: 'Events in window', description: String(alert.bucketDocCount) }]
+              : []),
           ]}
         />
         <EuiSpacer size="m" />

@@ -31,7 +31,11 @@ function baseAlert(overrides: Partial<TlsocAlert> = {}): TlsocAlert {
 describe('buildReason — doc-level', () => {
   it('full doc: host, source.ip:port, and user all present', () => {
     const alert = baseAlert();
-    const doc = { host: { name: 'web-01' }, source: { ip: '66.66.66.66', port: 443 }, user: { name: 'jdoe' } };
+    const doc = {
+      host: { name: 'web-01' },
+      source: { ip: '66.66.66.66', port: 443 },
+      user: { name: 'jdoe' },
+    };
     expect(buildReason(alert, doc)).toBe(
       'Event from web-01 (66.66.66.66:443, user jdoe) matched "Suspicious login" — high alert.'
     );
@@ -64,7 +68,9 @@ describe('buildReason — doc-level', () => {
   it('missing host.name → "Event" (no "from X"), rest still composed', () => {
     const alert = baseAlert();
     const doc = { source: { ip: '66.66.66.66' } };
-    expect(buildReason(alert, doc)).toBe('Event (66.66.66.66) matched "Suspicious login" — high alert.');
+    expect(buildReason(alert, doc)).toBe(
+      'Event (66.66.66.66) matched "Suspicious login" — high alert.'
+    );
   });
 
   it('doc with none of the known fields → bare "Event matched" sentence', () => {
@@ -82,7 +88,13 @@ describe('buildReason — doc-level', () => {
 describe('buildReason — bucket-level (no doc, bucketKeys present)', () => {
   it('composes groupBy = bucketKeys with the rule threshold sentence', () => {
     const alert = baseAlert({
-      rule: { soId: 'so1', name: 'Request flood', mode: 'stateful', index: 'foo-*', groupBy: ['source.ip'] },
+      rule: {
+        soId: 'so1',
+        name: 'Request flood',
+        mode: 'stateful',
+        index: 'foo-*',
+        groupBy: ['source.ip'],
+      },
       bucketKeys: ['66.66.66.66'],
     });
     expect(buildReason(alert)).toBe(
@@ -115,6 +127,42 @@ describe('buildReason — bucket-level (no doc, bucketKeys present)', () => {
       '"Legacy threshold": 66.66.66.66 crossed the rule threshold — high alert.'
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // WS-18 (PROB-18): bucketDocCount present → the count-prefixed sentence.
+  // ---------------------------------------------------------------------------
+  it('bucketDocCount present → leads with the count (live fixture shape)', () => {
+    const alert = baseAlert({
+      rule: {
+        soId: 'so1',
+        name: 'SSH brute force >3 in 5m per IP',
+        mode: 'stateful',
+        index: 'foo-*',
+        groupBy: ['source.ip'],
+      },
+      bucketKeys: ['10.8.0.10'],
+      bucketDocCount: 14,
+    });
+    expect(buildReason(alert)).toBe(
+      '14 events grouped by source.ip = 10.8.0.10 crossed the threshold — high alert.'
+    );
+  });
+
+  it('bucketDocCount absent → the existing named-rule sentence (no-count fallback)', () => {
+    const alert = baseAlert({
+      rule: {
+        soId: 'so1',
+        name: 'Request flood',
+        mode: 'stateful',
+        index: 'foo-*',
+        groupBy: ['source.ip'],
+      },
+      bucketKeys: ['66.66.66.66'],
+    });
+    expect(buildReason(alert)).toBe(
+      '"Request flood": source.ip = 66.66.66.66 crossed the rule threshold — high alert.'
+    );
+  });
 });
 
 describe('buildReason — fallback (no doc, no bucketKeys)', () => {
@@ -143,13 +191,15 @@ describe('substituteFieldPlaceholders', () => {
 
   it('substitutes multiple placeholders', () => {
     const md = 'Host {{host.name}} saw {{source.ip}}';
-    expect(substituteFieldPlaceholders(md, { host: { name: 'web-01' }, source: { ip: '1.2.3.4' } })).toBe(
-      'Host web-01 saw 1.2.3.4'
-    );
+    expect(
+      substituteFieldPlaceholders(md, { host: { name: 'web-01' }, source: { ip: '1.2.3.4' } })
+    ).toBe('Host web-01 saw 1.2.3.4');
   });
 
   it('tolerates whitespace inside the braces', () => {
-    expect(substituteFieldPlaceholders('{{ host.name }}', { host: { name: 'web-01' } })).toBe('web-01');
+    expect(substituteFieldPlaceholders('{{ host.name }}', { host: { name: 'web-01' } })).toBe(
+      'web-01'
+    );
   });
 
   it('missing field → em dash', () => {
@@ -167,11 +217,15 @@ describe('substituteFieldPlaceholders', () => {
   });
 
   it('object-valued field → JSON stringified', () => {
-    expect(substituteFieldPlaceholders('{{geo}}', { geo: { country: 'IN' } })).toBe('{"country":"IN"}');
+    expect(substituteFieldPlaceholders('{{geo}}', { geo: { country: 'IN' } })).toBe(
+      '{"country":"IN"}'
+    );
   });
 
   it('markdown with no placeholders is returned unchanged', () => {
-    expect(substituteFieldPlaceholders('# No placeholders here', {})).toBe('# No placeholders here');
+    expect(substituteFieldPlaceholders('# No placeholders here', {})).toBe(
+      '# No placeholders here'
+    );
   });
 });
 
@@ -206,6 +260,36 @@ describe('buildBucketContext', () => {
     const ctx = buildBucketContext(['source.ip'], ['66.66.66.66']);
     expect(substituteFieldPlaceholders('Investigate {{source.ip}}', ctx)).toBe(
       'Investigate 66.66.66.66'
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // WS-18 (PROB-18): named lookup via bucketKeyMap, preferred over the positional zip.
+  // ---------------------------------------------------------------------------
+  it('bucketKeyMap present → looks up by compositeSourceName(path), not position', () => {
+    expect(buildBucketContext(['source.ip'], ['66.66.66.66'], { source_ip: '10.8.0.10' })).toEqual({
+      source: { ip: '10.8.0.10' },
+    });
+  });
+
+  it('bucketKeyMap present but missing an entry for a field → falls back to the positional value', () => {
+    expect(
+      buildBucketContext(['source.ip', 'user.name'], ['66.66.66.66', 'jdoe'], {
+        source_ip: '10.8.0.10',
+      })
+    ).toEqual({ source: { ip: '10.8.0.10' }, user: { name: 'jdoe' } });
+  });
+
+  it('bucketKeyMap absent → unchanged positional behavior (backward-compatible)', () => {
+    expect(buildBucketContext(['source.ip'], ['66.66.66.66'], undefined)).toEqual({
+      source: { ip: '66.66.66.66' },
+    });
+  });
+
+  it('bucketKeyMap named lookup round-trips through substituteFieldPlaceholders', () => {
+    const ctx = buildBucketContext(['source.ip'], ['66.66.66.66'], { source_ip: '10.8.0.10' });
+    expect(substituteFieldPlaceholders('Investigate {{source.ip}}', ctx)).toBe(
+      'Investigate 10.8.0.10'
     );
   });
 });

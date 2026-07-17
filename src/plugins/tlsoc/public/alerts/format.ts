@@ -39,7 +39,24 @@ export function riskScoreColor(score: number): string {
   return 'hollow';
 }
 
+/**
+ * WS-18 (PROB-18): bucket-level alerts have no `relatedDocIds` — the "entity" the alert is about
+ * is the group-by key(s) that crossed the threshold. Named via `rule.groupBy` when known (e.g.
+ * "source.ip · 10.8.0.10"), else the bare bucket key values, comma-joined for multi-field groups.
+ */
+function bucketEntityOf(a: TlsocAlert): string {
+  const keys = a.bucketKeys ?? [];
+  const groupBy = a.rule?.groupBy;
+  if (!groupBy || groupBy.length === 0) {
+    return keys.join(', ');
+  }
+  return keys.map((value, i) => `${groupBy[i] ?? `group key ${i + 1}`} · ${value}`).join(', ');
+}
+
 export function entityOf(a: TlsocAlert): string {
+  if (a.bucketKeys?.length) {
+    return bucketEntityOf(a);
+  }
   if (a.relatedDocIds?.length) {
     const parts = a.relatedDocIds[0].split('|');
     // relatedDocIds look like "docId|index"; show "index · docId"

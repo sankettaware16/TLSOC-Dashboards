@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { compositeSourceName } from '../detection/internal';
 import { getPath } from './flatten';
 import { TlsocAlert } from './types';
 
@@ -49,6 +50,13 @@ export function buildReason(alert: TlsocAlert, doc?: Record<string, unknown>): s
     const lhs = groupBy.length > 0 ? groupBy.join(', ') : '';
     const rhs = alert.bucketKeys.join(', ');
     const crossed = lhs ? `${lhs} = ${rhs}` : rhs;
+    // WS-18: when the bucket's window doc_count is known, lead with it — the analyst sees the
+    // magnitude ("14 events") before the group-by, matching the fixture's decisive detail.
+    const countPrefix =
+      typeof alert.bucketDocCount === 'number' ? `${alert.bucketDocCount} events grouped by ` : '';
+    if (countPrefix) {
+      return `${countPrefix}${crossed} crossed the threshold — ${severity} alert.`;
+    }
     return `"${ruleName}": ${crossed} crossed the rule threshold — ${severity} alert.`;
   }
 
@@ -80,19 +88,29 @@ export function substituteFieldPlaceholders(
 
 /**
  * Build a small nested context object from a threshold rule's `groupBy` field paths and a bucket
- * alert's `bucketKeys` values (positional pairing), so dotted group-by fields (e.g. `source.ip`)
- * resolve correctly through {@link getPath}/{@link substituteFieldPlaceholders} — e.g.
+ * alert's `bucketKeys` values, so dotted group-by fields (e.g. `source.ip`) resolve correctly
+ * through {@link getPath}/{@link substituteFieldPlaceholders} — e.g.
  * `buildBucketContext(['source.ip'], ['66.66.66.66'])` → `{ source: { ip: '66.66.66.66' } }`.
+ *
+ * WS-18: when `bucketKeyMap` (the alert's raw composite-bucket `key`, keyed by
+ * `compositeSourceName(field)`) is supplied, each groupBy field's value is looked up by NAME
+ * (`bucketKeyMap[compositeSourceName(path)]`) rather than by position — this is correct even when
+ * the API's `bucketKeys` ordering doesn't match `groupBy`. Falls back to the positional
+ * `bucketKeys` zip when `bucketKeyMap` is absent or a field has no entry in it (backward-compatible
+ * with callers that only ever had `bucketKeys`).
+ *
  * Extra/missing entries on either side are ignored (defensive — the two arrays should be the same
  * length by construction, but this never throws if they briefly aren't).
  */
 export function buildBucketContext(
   groupBy: string[],
-  bucketKeys: string[]
+  bucketKeys: string[],
+  bucketKeyMap?: Record<string, unknown>
 ): Record<string, unknown> {
   const ctx: Record<string, unknown> = {};
   groupBy.forEach((path, i) => {
-    const value = bucketKeys[i];
+    const named = bucketKeyMap ? bucketKeyMap[compositeSourceName(path)] : undefined;
+    const value = named !== undefined ? named : bucketKeys[i];
     if (value === undefined || !path) return;
     const segments = path.split('.');
     let cur = ctx;

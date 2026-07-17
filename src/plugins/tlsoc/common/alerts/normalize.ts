@@ -10,8 +10,11 @@ import { severityLabel } from './severity';
 
 /**
  * Normalize a raw `bucket_keys` value into a clean string array, or `undefined` when absent.
- * OpenSearch Alerting's bucket-level alerts return this field as EITHER a comma-separated string
- * (documented behavior) OR an array (observed shape in some responses) — handle both defensively.
+ * The live GET /_plugins/_alerting/monitors/alerts response (WS-18) nests this under
+ * `agg_alert_content.bucket_keys` and it is ALWAYS an array of strings there (source:
+ * common-utils Alert.kt → AggregationResultBucket.innerXContent). The comma-joined STRING shape
+ * only exists upstream in the notification-template context (Alert.asTemplateArg), never on the
+ * list API — kept here purely as a defensive fallback, not the documented list-API shape.
  */
 function normalizeBucketKeys(raw: unknown): string[] | undefined {
   if (Array.isArray(raw)) return raw.map((v) => String(v));
@@ -32,7 +35,13 @@ function normalizeBucketKeys(raw: unknown): string[] | undefined {
 export function normalizeAlert(raw: any, rules: RuleRefMap = {}): TlsocAlert {
   const monitorId: string = raw?.monitor_id ?? '';
   const rule = rules[monitorId] ?? null;
-  const bucketKeys = normalizeBucketKeys(raw?.bucket_keys);
+  // WS-18: the live list-API response nests bucket data under agg_alert_content — prefer that,
+  // falling back to a top-level shape (never observed on the list API, but defensive).
+  const agg = raw?.agg_alert_content;
+  const bucketKeys = normalizeBucketKeys(agg?.bucket_keys ?? raw?.bucket_keys);
+  const parentBucketPath = agg?.parent_bucket_path ?? raw?.parent_bucket_path;
+  const bucketDocCount = agg?.bucket?.doc_count;
+  const bucketKeyMap = agg?.bucket?.key;
   return {
     id: raw?.id ?? '',
     monitorId,
@@ -44,7 +53,13 @@ export function normalizeAlert(raw: any, rules: RuleRefMap = {}): TlsocAlert {
     findingIds: Array.isArray(raw?.finding_ids) ? raw.finding_ids : [],
     relatedDocIds: Array.isArray(raw?.related_doc_ids) ? raw.related_doc_ids : [],
     ...(bucketKeys !== undefined ? { bucketKeys } : {}),
-    ...(raw?.parent_bucket_path != null ? { parentBucketPath: String(raw.parent_bucket_path) } : {}),
+    ...(parentBucketPath != null ? { parentBucketPath: String(parentBucketPath) } : {}),
+    ...(typeof bucketDocCount === 'number' && Number.isFinite(bucketDocCount)
+      ? { bucketDocCount }
+      : {}),
+    ...(bucketKeyMap != null && typeof bucketKeyMap === 'object' && !Array.isArray(bucketKeyMap)
+      ? { bucketKeyMap }
+      : {}),
     startTime: raw?.start_time ?? null,
     lastNotificationTime: raw?.last_notification_time ?? null,
     acknowledgedTime: raw?.acknowledged_time ?? null,

@@ -57,6 +57,18 @@ export interface TlsocAlert {
   bucketKeys?: string[];
   /** Bucket-level alerts only — the Alerting bucket path the trigger fired under. */
   parentBucketPath?: string;
+  /**
+   * Bucket-level alerts only (WS-18) — the group's document count in the trigger window (the raw
+   * `agg_alert_content.bucket.doc_count`). Absent on doc-level alerts and when not a finite number.
+   */
+  bucketDocCount?: number;
+  /**
+   * Bucket-level alerts only (WS-18) — the raw composite-aggregation bucket `key` object (the
+   * source of `agg_alert_content.bucket.key`). Keys are `compositeSourceName(field)` slugs (e.g.
+   * `source.ip` → `source_ip`), NOT the dotted field path — look up via `compositeSourceName`, not
+   * the field name directly. Preferred over the positional `bucketKeys` zip when present.
+   */
+  bucketKeyMap?: Record<string, unknown>;
   startTime: number | null;
   lastNotificationTime: number | null;
   acknowledgedTime: number | null;
