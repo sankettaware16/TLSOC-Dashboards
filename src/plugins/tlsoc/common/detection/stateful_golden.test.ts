@@ -219,4 +219,85 @@ describe('golden: realistic stateful "> N within T" detections compile to bucket
       ],
     });
   });
+
+  it('4. > 20 failed logins from one user within 1 hour, run every 15 minutes (WS-20 / PROB-20 configurable cadence)', () => {
+    const rule: ThresholdRuleDefinition = {
+      name: 'Repeated failed logins for one user within an hour',
+      description: 'A single user account failing authentication more than 20 times in an hour.',
+      severity: 'medium',
+      index: 'fosstlsoc-logs-*',
+      filter: {
+        logic: 'AND',
+        conditions: [{ field: 'event.outcome', operator: 'equals', value: 'failure' }],
+      },
+      groupBy: ['user.name'],
+      window: { value: 1, unit: 'HOURS' },
+      runEvery: { value: 15, unit: 'MINUTES' },
+      threshold: { operator: 'gt', value: 20 },
+    };
+
+    expect(compileToBucketLevelMonitor(rule)).toEqual({
+      type: 'monitor',
+      name: 'Repeated failed logins for one user within an hour',
+      monitor_type: 'bucket_level_monitor',
+      enabled: true,
+      // schedule takes R (15 MINUTES) — NOT T (1 HOURS).
+      schedule: { period: { interval: 15, unit: 'MINUTES' } },
+      inputs: [
+        {
+          search: {
+            indices: ['fosstlsoc-logs-*'],
+            query: {
+              size: 0,
+              query: {
+                bool: {
+                  filter: [
+                    {
+                      range: {
+                        // rangeFrom stays derived from T (1 HOURS) — unaffected by R.
+                        '@timestamp': {
+                          from: '{{period_end}}||-1h',
+                          to: '{{period_end}}',
+                          include_lower: true,
+                          include_upper: true,
+                          format: 'epoch_millis',
+                        },
+                      },
+                    },
+                    {
+                      query_string: {
+                        query: 'event.outcome:"failure"',
+                        analyze_wildcard: true,
+                      },
+                    },
+                  ],
+                },
+              },
+              aggregations: {
+                tlsoc_groups: {
+                  composite: {
+                    size: 100,
+                    sources: [{ user_name: { terms: { field: 'user.name' } } }],
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+      triggers: [
+        {
+          bucket_level_trigger: {
+            name: 'Repeated failed logins for one user within an hour threshold breached',
+            severity: '3',
+            condition: {
+              parent_bucket_path: 'tlsoc_groups',
+              buckets_path: { _count: '_count' },
+              script: { source: 'params._count > 20', lang: 'painless' },
+            },
+          },
+        },
+      ],
+    });
+  });
 });

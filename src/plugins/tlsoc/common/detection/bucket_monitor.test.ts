@@ -105,6 +105,60 @@ describe('compileToBucketLevelMonitor — the window stays in lockstep in the co
   });
 });
 
+describe('compileToBucketLevelMonitor — configurable run-every schedule (WS-20)', () => {
+  it('runEvery flows to schedule.period; the @timestamp range stays derived from window (T)', () => {
+    const m = compileToBucketLevelMonitor(
+      baseRule({ window: { value: 15, unit: 'MINUTES' }, runEvery: { value: 5, unit: 'MINUTES' } })
+    );
+    expect(m.schedule.period).toEqual({ interval: 5, unit: 'MINUTES' });
+    expect(filtersOf(m)[0].range['@timestamp'].from).toBe('{{period_end}}||-15m');
+    expect(filtersOf(m)[0].range['@timestamp'].to).toBe('{{period_end}}');
+  });
+
+  it('runEvery absent → legacy default of schedule = window (T)', () => {
+    const m = compileToBucketLevelMonitor(baseRule({ window: { value: 5, unit: 'MINUTES' } }));
+    expect(m.schedule.period).toEqual({ interval: 5, unit: 'MINUTES' });
+  });
+});
+
+describe('assertValidThresholdRule — run-every guards (via compile, WS-20)', () => {
+  it('R > T throws (a longer cadence would leave an uncovered gap)', () => {
+    expect(() =>
+      compileToBucketLevelMonitor(
+        baseRule({ window: { value: 5, unit: 'MINUTES' }, runEvery: { value: 10, unit: 'MINUTES' } })
+      )
+    ).toThrow(/run-every must not exceed the threshold window/);
+  });
+
+  it('R == T passes', () => {
+    expect(() =>
+      compileToBucketLevelMonitor(
+        baseRule({ window: { value: 5, unit: 'MINUTES' }, runEvery: { value: 5, unit: 'MINUTES' } })
+      )
+    ).not.toThrow();
+  });
+
+  it('R < T across units passes (R in MINUTES, T in HOURS)', () => {
+    expect(() =>
+      compileToBucketLevelMonitor(
+        baseRule({ window: { value: 1, unit: 'HOURS' }, runEvery: { value: 30, unit: 'MINUTES' } })
+      )
+    ).not.toThrow();
+  });
+
+  it('runEvery 0 throws', () => {
+    expect(() =>
+      compileToBucketLevelMonitor(baseRule({ runEvery: { value: 0, unit: 'MINUTES' } }))
+    ).toThrow(/positive run-every value/);
+  });
+
+  it('runEvery negative throws', () => {
+    expect(() =>
+      compileToBucketLevelMonitor(baseRule({ runEvery: { value: -5, unit: 'MINUTES' } }))
+    ).toThrow(/positive run-every value/);
+  });
+});
+
 describe('assertValidThresholdRule — guards (via compile)', () => {
   it('requires at least one filter condition', () => {
     expect(() =>

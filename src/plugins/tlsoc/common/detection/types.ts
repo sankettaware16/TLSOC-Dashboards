@@ -155,6 +155,12 @@ export interface RuleDefinition extends RuleMetadataFields {
   author?: string;
   /** Date string (YYYY/MM/DD per Sigma convention). Optional; caller-supplied for determinism. */
   date?: string;
+  /**
+   * Optional schedule cadence R — how often the compiled monitor runs. Absent = legacy default of
+   * 1 minute (byte-identical to pre-WS-20 output). Does NOT affect the compiled query in any way;
+   * for a stateless (doc-level) rule there is no window/range to derive from R in the first place.
+   */
+  runEvery?: TimeWindow;
 }
 
 /**
@@ -196,4 +202,14 @@ export interface ThresholdRuleDefinition extends RuleMetadataFields {
   references?: string[];
   author?: string;
   date?: string;
+  /**
+   * Optional schedule cadence R — how often the bucket-level monitor runs. Absent = legacy default
+   * of R = window (T) — byte-identical to pre-WS-20 output. When present, R must be ≤ T (validated
+   * by {@link assertValidThresholdRule}): a per-bucket-key state machine dedups alerts, so R < T is
+   * safe (no duplicate-alert spam), but R > T would leave an (R − T) gap the rule never evaluates.
+   * The `@timestamp` range filter and the Sigma `timespan` NEVER derive from R — only from T
+   * ({@link buildWindow}) — widening the range would silently change "N in T" semantics, which is
+   * also why there is deliberately no separate "look-back" concept.
+   */
+  runEvery?: TimeWindow;
 }

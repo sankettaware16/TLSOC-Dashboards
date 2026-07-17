@@ -10,6 +10,7 @@ import {
   RuleDefinition,
   Severity,
   ThresholdRuleDefinition,
+  TimeWindow,
   VALUELESS_OPERATORS,
 } from './types';
 
@@ -37,6 +38,18 @@ export const SEVERITY_TO_MONITOR_SEVERITY: Record<Severity, string> = {
   low: '4',
 };
 
+/** Minutes per {@link TimeWindow} unit, for comparing two windows expressed in different units. */
+const MINUTES_PER_UNIT: Record<TimeWindow['unit'], number> = {
+  MINUTES: 1,
+  HOURS: 60,
+  DAYS: 60 * 24,
+};
+
+/** Express a {@link TimeWindow} in minutes, so windows in different units can be compared. */
+export function windowMinutes(window: TimeWindow): number {
+  return window.value * MINUTES_PER_UNIT[window.unit];
+}
+
 /** Validate a rule before compiling; throws an Error with a clear, user-facing message. */
 export function assertValidRule(rule: RuleDefinition): void {
   if (!rule || typeof rule.name !== 'string' || rule.name.trim() === '') {
@@ -51,6 +64,9 @@ export function assertValidRule(rule: RuleDefinition): void {
   rule.group.conditions.forEach((condition, index) =>
     assertValidCondition(condition, index, rule.name)
   );
+  if (rule.runEvery && !(rule.runEvery.value > 0 && Number.isInteger(rule.runEvery.value))) {
+    throw new Error(`Detection rule "${rule.name}" must have a positive run-every value.`);
+  }
 }
 
 function assertValidCondition(condition: Condition, index: number, ruleName: string): void {
@@ -113,5 +129,16 @@ export function assertValidThresholdRule(rule: ThresholdRuleDefinition): void {
   }
   if (!rule.threshold || !Number.isInteger(rule.threshold.value) || rule.threshold.value < 0) {
     throw new Error(`Threshold rule "${rule.name}" must have a non-negative integer threshold.`);
+  }
+  if (rule.runEvery) {
+    if (!(rule.runEvery.value > 0 && Number.isInteger(rule.runEvery.value))) {
+      throw new Error(`Threshold rule "${rule.name}" must have a positive run-every value.`);
+    }
+    if (windowMinutes(rule.runEvery) > windowMinutes(rule.window)) {
+      throw new Error(
+        `Threshold rule "${rule.name}": run-every must not exceed the threshold window — a longer ` +
+          'cadence would leave time the rule never evaluates.'
+      );
+    }
   }
 }

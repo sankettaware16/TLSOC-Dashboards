@@ -58,7 +58,7 @@ export interface BucketLevelMonitor {
 
 export function compileToBucketLevelMonitor(rule: ThresholdRuleDefinition): BucketLevelMonitor {
   assertValidThresholdRule(rule);
-  const window = buildWindow(rule.window);
+  const window = buildWindow(rule.window, rule.runEvery);
   const filterQuery = conditionGroupToLucene(rule.filter);
   const painless = `params._count ${PAINLESS_OP[rule.threshold.operator]} ${rule.threshold.value}`;
 

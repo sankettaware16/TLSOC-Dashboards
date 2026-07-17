@@ -172,6 +172,62 @@ describe('golden: realistic SOC detections compile to BOTH Sigma and a doc-level
       '(url.query:"union select") OR (url.query:*<script>*) OR (url.original:/(?i)etc\\/passwd/)'
     );
   });
+
+  it('4. Suspicious PowerShell execution with a configured run-every cadence (WS-20 / PROB-20)', () => {
+    const rule: RuleDefinition = {
+      name: 'Suspicious PowerShell execution',
+      description: 'PowerShell invoked with an encoded command argument.',
+      severity: 'high',
+      index: 'fosstlsoc-logs-*',
+      logSource: { category: 'process_creation', product: 'windows' },
+      runEvery: { value: 10, unit: 'MINUTES' },
+      group: {
+        logic: 'AND',
+        conditions: [
+          { field: 'process.name', operator: 'equals', value: 'powershell.exe' },
+          { field: 'process.command_line', operator: 'contains', value: '-enc' },
+        ],
+      },
+    };
+
+    expect(compileToDocLevelMonitor(rule)).toEqual({
+      type: 'monitor',
+      name: 'Suspicious PowerShell execution',
+      monitor_type: 'doc_level_monitor',
+      enabled: true,
+      schedule: { period: { interval: 10, unit: 'MINUTES' } },
+      inputs: [
+        {
+          doc_level_input: {
+            description: 'PowerShell invoked with an encoded command argument.',
+            indices: ['fosstlsoc-logs-*'],
+            queries: [
+              {
+                id: 'suspicious_powershell_execution',
+                name: 'suspicious_powershell_execution',
+                query: '(process.name:"powershell.exe") AND (process.command_line:*\\-enc*)',
+                tags: ['tlsoc', 'high'],
+              },
+            ],
+          },
+        },
+      ],
+      triggers: [
+        {
+          document_level_trigger: {
+            name: 'Suspicious PowerShell execution matched',
+            severity: '2',
+            condition: {
+              script: {
+                source: 'query[name=suspicious_powershell_execution]',
+                lang: 'painless',
+              },
+            },
+          },
+        },
+      ],
+    });
+  });
 });
 
 describe('operator sync — every v1 operator compiles to BOTH targets', () => {

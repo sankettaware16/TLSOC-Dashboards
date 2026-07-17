@@ -83,3 +83,31 @@ describe('compileToDocLevelMonitor — monitor envelope', () => {
     expect(sev('low')).toBe('4');
   });
 });
+
+describe('compileToDocLevelMonitor — configurable run-every schedule (WS-20)', () => {
+  it('runEvery present → schedule period matches it', () => {
+    const m = compileToDocLevelMonitor(
+      ruleWith(
+        { field: 'event.module', operator: 'equals', value: 'ssh' },
+        { runEvery: { value: 10, unit: 'MINUTES' } }
+      )
+    );
+    expect(m.schedule).toEqual({ period: { interval: 10, unit: 'MINUTES' } });
+  });
+
+  it('runEvery absent → legacy default of 1 MINUTE', () => {
+    const m = compileToDocLevelMonitor(ruleWith({ field: 'event.module', operator: 'equals', value: 'ssh' }));
+    expect(m.schedule).toEqual({ period: { interval: 1, unit: 'MINUTES' } });
+  });
+
+  it('rejects a non-positive runEvery value', () => {
+    expect(() =>
+      compileToDocLevelMonitor(
+        ruleWith(
+          { field: 'event.module', operator: 'equals', value: 'ssh' },
+          { runEvery: { value: 0, unit: 'MINUTES' } }
+        )
+      )
+    ).toThrow(/positive run-every value/);
+  });
+});

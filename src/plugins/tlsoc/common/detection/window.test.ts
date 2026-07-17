@@ -41,3 +41,29 @@ describe('buildWindow — single source of truth for T', () => {
     expect(FROM_ABBREV[abbrev]).toBe(w.schedule.period.unit);
   });
 });
+
+describe('buildWindow(window, runEvery) — R drives the schedule ONLY, T still drives rangeFrom/timespan', () => {
+  it('single-arg call equals passing runEvery as undefined (legacy default is byte-identical)', () => {
+    for (const window of cases) {
+      expect(buildWindow(window)).toEqual(buildWindow(window, undefined));
+    }
+  });
+
+  it('R < T (both MINUTES): schedule takes R, rangeFrom/timespan stay on T', () => {
+    const window: TimeWindow = { value: 15, unit: 'MINUTES' };
+    const runEvery: TimeWindow = { value: 5, unit: 'MINUTES' };
+    const w = buildWindow(window, runEvery);
+    expect(w.schedule).toEqual({ period: { interval: 5, unit: 'MINUTES' } });
+    expect(w.rangeFrom).toBe('{{period_end}}||-15m');
+    expect(w.timespan).toBe('15m');
+  });
+
+  it('R in HOURS, T in DAYS: schedule takes R (in its own unit), rangeFrom/timespan stay on T', () => {
+    const window: TimeWindow = { value: 1, unit: 'DAYS' };
+    const runEvery: TimeWindow = { value: 6, unit: 'HOURS' };
+    const w = buildWindow(window, runEvery);
+    expect(w.schedule).toEqual({ period: { interval: 6, unit: 'HOURS' } });
+    expect(w.rangeFrom).toBe('{{period_end}}||-1d');
+    expect(w.timespan).toBe('1d');
+  });
+});

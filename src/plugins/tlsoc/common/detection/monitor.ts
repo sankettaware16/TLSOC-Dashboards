@@ -54,7 +54,9 @@ export function compileToDocLevelMonitor(rule: RuleDefinition): DocLevelMonitor 
     name: rule.name,
     monitor_type: 'doc_level_monitor',
     enabled: true,
-    schedule: { period: { interval: 1, unit: 'MINUTES' } },
+    schedule: rule.runEvery
+      ? { period: { interval: rule.runEvery.value, unit: rule.runEvery.unit } }
+      : { period: { interval: 1, unit: 'MINUTES' } },
     inputs: [
       {
         doc_level_input: {
