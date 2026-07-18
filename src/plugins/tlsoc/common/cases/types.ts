@@ -19,7 +19,8 @@ export type CaseActivityType =
   | 'status_changed'
   | 'edited'
   | 'commented'
-  | 'alerts_linked';
+  | 'alerts_linked'
+  | 'alerts_acknowledged';
 
 export interface CaseActivity {
   id: string;

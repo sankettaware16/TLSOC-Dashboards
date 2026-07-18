@@ -11,6 +11,7 @@ export const ACTIVITY_TYPES: CaseActivityType[] = [
   'edited',
   'commented',
   'alerts_linked',
+  'alerts_acknowledged',
 ];
 
 /** Human-readable summary builders (pure — the testable core). */
@@ -33,6 +34,17 @@ export function describeComment(): string {
 
 export function describeAlertsLinked(count: number): string {
   return count === 1 ? 'Linked 1 alert' : `Linked ${count} alerts`;
+}
+
+/**
+ * Close-time acknowledge summary (PROB-24). Reports what actually happened — including the
+ * partial-failure case — so the audit trail never overstates ("acknowledged all") what a flaky
+ * Alerting call may have only partly done.
+ */
+export function describeAlertsAcknowledged(acked: number, failed: number): string {
+  const ackedPart = acked === 1 ? 'Acknowledged 1 linked alert' : `Acknowledged ${acked} linked alerts`;
+  if (failed <= 0) return `${ackedPart} on close`;
+  return `${ackedPart} on close (${failed} could not be acknowledged)`;
 }
 
 /** Pure entry builder; id + createdAt supplied by the caller (route) so this stays pure. */

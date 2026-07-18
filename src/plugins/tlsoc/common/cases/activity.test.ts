@@ -7,6 +7,7 @@ import {
   ACTIVITY_TYPES,
   appendActivity,
   buildActivity,
+  describeAlertsAcknowledged,
   describeAlertsLinked,
   describeComment,
   describeCreated,
@@ -16,13 +17,14 @@ import {
 import { CaseActivity, CaseActivityType } from './types';
 
 describe('ACTIVITY_TYPES', () => {
-  it('contains exactly the five expected types', () => {
+  it('contains exactly the six expected types', () => {
     expect(ACTIVITY_TYPES).toEqual([
       'created',
       'status_changed',
       'edited',
       'commented',
       'alerts_linked',
+      'alerts_acknowledged',
     ]);
   });
 });
@@ -90,6 +92,28 @@ describe('describeAlertsLinked', () => {
 
   it('returns plural for count=0', () => {
     expect(describeAlertsLinked(0)).toBe('Linked 0 alerts');
+  });
+});
+
+describe('describeAlertsAcknowledged (PROB-24 close-time summary)', () => {
+  it('reports a clean full acknowledge', () => {
+    expect(describeAlertsAcknowledged(14, 0)).toBe('Acknowledged 14 linked alerts on close');
+  });
+
+  it('uses the singular for one alert', () => {
+    expect(describeAlertsAcknowledged(1, 0)).toBe('Acknowledged 1 linked alert on close');
+  });
+
+  it('records a partial failure honestly instead of overstating', () => {
+    expect(describeAlertsAcknowledged(12, 2)).toBe(
+      'Acknowledged 12 linked alerts on close (2 could not be acknowledged)'
+    );
+  });
+
+  it('records a total failure (0 acked)', () => {
+    expect(describeAlertsAcknowledged(0, 14)).toBe(
+      'Acknowledged 0 linked alerts on close (14 could not be acknowledged)'
+    );
   });
 });
 

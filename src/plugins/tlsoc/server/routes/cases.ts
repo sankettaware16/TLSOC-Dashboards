@@ -20,8 +20,9 @@ import {
   describeEdit,
   describeComment,
   describeAlertsLinked,
+  describeAlertsAcknowledged,
 } from '../../common/cases';
-import { normalizeAlert, partitionByIds } from '../../common/alerts';
+import { groupAckTargets, normalizeAlert, partitionByIds } from '../../common/alerts';
 import { buildRuleRefMap, fetchAlertsByIds } from './alerts';
 import { getCurrentActor } from '../lib/current_actor';
 import {
@@ -298,6 +299,10 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
           linkedAlertIds: schema.maybe(schema.arrayOf(schema.string())),
           linkedFindingIds: schema.maybe(schema.arrayOf(schema.string())),
           category: schema.maybe(schema.string()),
+          // PROB-24: on a transition to Closed, also acknowledge the case's linked alerts in the
+          // Alerting engine (default true — the close modal's checkbox). Ignored for any other
+          // status change.
+          acknowledgeAlerts: schema.maybe(schema.boolean()),
         }),
       },
     },
@@ -345,6 +350,62 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
 
       const now = nowIso();
       const actor = getCurrentActor(request, auth);
+
+      // PROB-24: closing a case acknowledges its linked alerts in the Alerting engine (unless the
+      // caller opted out) — otherwise "case Closed" leaves its alerts ACTIVE forever on the Alerts
+      // page. ACKNOWLEDGED is the analyst-done state (Alerting has no manual close; COMPLETED is
+      // engine-managed), already-acknowledged/completed alerts are skipped, and EVERY failure path
+      // is non-blocking: a flaky Alerting call must never prevent the case from closing — partial
+      // results are recorded honestly in the audit trail instead.
+      let ackActivity: CaseActivity | null = null;
+      const isClosing =
+        body.status === 'Closed' && body.status !== existing.attributes.status;
+      if (isClosing && body.acknowledgeAlerts !== false) {
+        const linkedIds: string[] = existing.attributes.linkedAlertIds ?? [];
+        if (linkedIds.length > 0) {
+          try {
+            const esClient = context.core.opensearch.client.asCurrentUser;
+            const rawAlerts = await fetchAlertsByIds(esClient, linkedIds);
+            const targets = groupAckTargets(
+              rawAlerts.map((a: any) => ({ id: a?.id, monitorId: a?.monitor_id, state: a?.state }))
+            );
+            let acked = 0;
+            let failed = 0;
+            for (const t of targets) {
+              try {
+                await esClient.transport.request(
+                  {
+                    method: 'POST',
+                    path: `/_plugins/_alerting/monitors/${t.monitorId}/_acknowledge/alerts`,
+                    body: { alerts: t.alertIds }, // field name verified live (alerts.ts:285)
+                  },
+                  // Same fast-fail guard as the alerts route: the engine's acknowledge can
+                  // deadlock cluster-side — cap the wait so a hung ack can't hang the case close.
+                  { requestTimeout: 15000, maxRetries: 0 }
+                );
+                acked += t.alertIds.length;
+              } catch (ackErr) {
+                failed += t.alertIds.length;
+                logger.warn(
+                  `tlsoc cases close-ack: monitor ${t.monitorId} acknowledge failed: ${ackErr.message}`
+                );
+              }
+            }
+            if (acked > 0 || failed > 0) {
+              ackActivity = buildActivity(
+                'alerts_acknowledged',
+                describeAlertsAcknowledged(acked, failed),
+                actor,
+                genId(),
+                now
+              );
+            }
+          } catch (err) {
+            // Even listing the alerts failed — close the case anyway, just log it.
+            logger.warn(`tlsoc cases close-ack: skipped (could not fetch linked alerts): ${err.message}`);
+          }
+        }
+      }
 
       // Build a partial patch of ONLY the provided fields + updatedAt
       const patch: Record<string, any> = { updatedAt: now };
@@ -396,6 +457,9 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
         newEntries.push(
           buildActivity('edited', describeEdit(changedFields), actor, genId(), now)
         );
+      }
+      if (ackActivity) {
+        newEntries.push(ackActivity); // after status_changed — reads as "closed, then acknowledged"
       }
       if (newEntries.length > 0) {
         patch.activity = [...(existing.attributes.activity ?? []), ...newEntries];

@@ -13,9 +13,11 @@ import {
   EuiBasicTableColumn,
   EuiButton,
   EuiCallOut,
+  EuiCheckbox,
   EuiCodeBlock,
   EuiCommentList,
   EuiComboBox,
+  EuiConfirmModal,
   EuiDescriptionList,
   EuiFieldText,
   EuiFlexGroup,
@@ -103,6 +105,8 @@ function iconForActivity(type: CaseActivityType): string {
       return 'pencil';
     case 'alerts_linked':
       return 'link';
+    case 'alerts_acknowledged':
+      return 'checkInCircleFilled';
     case 'commented':
       return 'quote';
     default:
@@ -114,6 +118,10 @@ export function CaseDetail({ core, data, caseId, onBack }: Props) {
   const { caseItem, loading, error, updateCase, addComment } = useCase(core, caseId);
   const { alerts: linkedAlerts, missingIds, loading: alertsLoading } = useCaseAlerts(core, caseId);
   const [selectedAlert, setSelectedAlert] = useState<HydratedAlert | null>(null);
+  // PROB-24: closing a case confirms first — with an opt-out for acknowledging the linked alerts
+  // (default ON; otherwise "Closed" leaves them ACTIVE on the Alerts page forever).
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [ackOnClose, setAckOnClose] = useState(true);
 
   // Editable detail fields seeded from caseItem
   const [title, setTitle] = useState('');
@@ -449,9 +457,15 @@ export function CaseDetail({ core, data, caseId, onBack }: Props) {
                 value={caseItem.status}
                 onChange={(e) => {
                   const val = e.target.value as CaseStatus;
-                  if (val !== caseItem.status) {
-                    updateCase({ status: val });
+                  if (val === caseItem.status) return;
+                  // PROB-24: Closed goes through a confirm modal (with the acknowledge opt-out);
+                  // every other transition applies immediately as before.
+                  if (val === 'Closed') {
+                    setAckOnClose(true);
+                    setShowCloseConfirm(true);
+                    return;
                   }
+                  updateCase({ status: val });
                 }}
                 options={statusOptions}
               />
@@ -693,6 +707,31 @@ export function CaseDetail({ core, data, caseId, onBack }: Props) {
             </EuiAccordion>
           </EuiFlyoutBody>
         </EuiFlyout>
+      ) : null}
+
+      {showCloseConfirm ? (
+        <EuiConfirmModal
+          title="Close this case?"
+          onCancel={() => setShowCloseConfirm(false)}
+          onConfirm={() => {
+            setShowCloseConfirm(false);
+            updateCase({ status: 'Closed', acknowledgeAlerts: ackOnClose });
+          }}
+          cancelButtonText="Cancel"
+          confirmButtonText="Close case"
+        >
+          <p>Closing records the resolution and stamps the close time in the audit trail.</p>
+          {caseItem.linkedAlertIds.length > 0 ? (
+            <EuiCheckbox
+              id="tlsoc-close-ack-linked-alerts"
+              label={`Acknowledge the ${caseItem.linkedAlertIds.length} linked alert${
+                caseItem.linkedAlertIds.length === 1 ? '' : 's'
+              } (recommended — otherwise they stay ACTIVE on the Alerts page)`}
+              checked={ackOnClose}
+              onChange={(e) => setAckOnClose(e.target.checked)}
+            />
+          ) : null}
+        </EuiConfirmModal>
       ) : null}
     </EuiPage>
   );
