@@ -30,7 +30,7 @@ import {
 import { CoreStart } from 'opensearch-dashboards/public';
 import { DataPublicPluginStart } from '../../../data/public';
 import type { DiscoverStart } from '../../../discover/public';
-import { TlsocAlert } from '../../common/alerts';
+import { TlsocAlert, groupAckTargets } from '../../common/alerts';
 import { buildCaseFromAlert } from '../../common/cases';
 import { sortAlerts } from './sort';
 import { useAlerts } from './use_alerts';
@@ -60,7 +60,10 @@ export function AlertsApp({ core, data, discover }: Props) {
   // refreshMs stays a capability of useAlerts itself for any future headless caller without a
   // picker; alerts_app.tsx just doesn't drive it. Fetch-time datemath resolution (inside `load()`)
   // still makes 'now-24h'..'now' roll forward on every picker-driven poll either way.
-  const { alerts, loading, error, reload, acknowledge } = useAlerts(core, { start, end });
+  const { alerts, loading, error, reload, acknowledge, acknowledgeBulk } = useAlerts(core, {
+    start,
+    end,
+  });
   const [dataViews, setDataViews] = useState<Array<{ id: string; title: string }>>([]);
   const [stateFilter, setStateFilter] = useState<string>('active');
   const [sevFilter, setSevFilter] = useState<string>('all');
@@ -313,6 +316,30 @@ export function AlertsApp({ core, data, discover }: Props) {
           <EuiFlexGroup gutterSize="s" alignItems="center">
             <EuiFlexItem grow={false}>
               <EuiText size="s">{bulkSelected.length} selected</EuiText>
+            </EuiFlexItem>
+            <EuiFlexItem grow={false}>
+              {/* PROB-25: bulk acknowledge — one _acknowledge call per monitor group; only ACTIVE
+                  alerts are ack-able, so a mixed selection shows the actionable count. */}
+              <EuiButton
+                size="s"
+                iconType="check"
+                isDisabled={groupAckTargets(bulkSelected).length === 0}
+                onClick={async () => {
+                  await acknowledgeBulk(groupAckTargets(bulkSelected));
+                  setBulkSelected([]);
+                }}
+              >
+                {(() => {
+                  const n = groupAckTargets(bulkSelected).reduce(
+                    (sum, t) => sum + t.alertIds.length,
+                    0
+                  );
+                  if (n === 0) return 'Acknowledge selected';
+                  return n === bulkSelected.length
+                    ? `Acknowledge ${n} selected`
+                    : `Acknowledge ${n} active of ${bulkSelected.length} selected`;
+                })()}
+              </EuiButton>
             </EuiFlexItem>
             <EuiFlexItem grow={false}>
               <EuiButton

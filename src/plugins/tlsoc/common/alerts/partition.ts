@@ -27,6 +27,43 @@ export interface AlertIdPartition {
  * - `missingIds` preserves `wantedIds` order and is deduped.
  * - Alerts without an `id`, duplicate alert entries, and duplicate wanted ids are tolerated.
  */
+/** One per-monitor acknowledge batch (the Alerting acknowledge API is per-monitor). */
+export interface AckTarget {
+  monitorId: string;
+  alertIds: string[];
+}
+
+/** The minimal alert shape {@link groupAckTargets} reads (normalized camelCase fields). */
+interface AckableAlert {
+  id?: string;
+  monitorId?: string;
+  state?: string;
+}
+
+/**
+ * Pure: group a selection of alerts into per-monitor acknowledge batches (PROB-24/25).
+ *
+ * Only ACTIVE alerts are acknowledgeable (ACKNOWLEDGED is already done; COMPLETED/ERROR/DELETED
+ * are engine-managed states the acknowledge API rejects) — everything else is filtered out, as are
+ * entries missing an id or monitorId. Ids are deduped; group order follows first appearance, id
+ * order within a group follows the input (stable for tests and for audit summaries).
+ */
+export function groupAckTargets(alerts: AckableAlert[]): AckTarget[] {
+  const byMonitor = new Map<string, string[]>();
+  const seenIds = new Set<string>();
+  for (const a of alerts ?? []) {
+    if (a?.state !== 'ACTIVE') continue;
+    const id = a?.id;
+    const monitorId = a?.monitorId;
+    if (!id || !monitorId || seenIds.has(id)) continue;
+    seenIds.add(id);
+    const list = byMonitor.get(monitorId) ?? [];
+    list.push(id);
+    byMonitor.set(monitorId, list);
+  }
+  return Array.from(byMonitor.entries()).map(([monitorId, alertIds]) => ({ monitorId, alertIds }));
+}
+
 export function partitionByIds(rawAlerts: any[], wantedIds: string[]): AlertIdPartition {
   const byId = new Map<string, any>();
   for (const a of rawAlerts ?? []) {

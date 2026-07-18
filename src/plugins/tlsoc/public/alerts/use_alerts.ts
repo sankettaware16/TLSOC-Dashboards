@@ -88,5 +88,40 @@ export function useAlerts(core: CoreStart, options: UseAlertsOptions = {}) {
     [core, load]
   );
 
-  return { alerts, loading, error, reload: load, acknowledge };
+  // Bulk acknowledge (PROB-25): one _acknowledge POST per monitor group (the Alerting API is
+  // per-monitor). Per-group failures don't abort the rest; ONE summary toast + ONE reload at the
+  // end — not a toast/reload storm per group.
+  const acknowledgeBulk = useCallback(
+    async (targets: Array<{ monitorId: string; alertIds: string[] }>) => {
+      if (!targets.length) return;
+      let acked = 0;
+      const failures: string[] = [];
+      for (const t of targets) {
+        try {
+          await core.http.post('/api/tlsoc/alerts/_acknowledge', {
+            body: JSON.stringify({ monitorId: t.monitorId, alertIds: t.alertIds }),
+          });
+          acked += t.alertIds.length;
+        } catch (e) {
+          const err = e as any;
+          failures.push(err?.body?.message ?? err?.message ?? 'Failed');
+        }
+      }
+      if (acked > 0) {
+        core.notifications.toasts.addSuccess(
+          acked === 1 ? 'Acknowledged 1 alert' : `Acknowledged ${acked} alerts`
+        );
+      }
+      if (failures.length > 0) {
+        core.notifications.toasts.addDanger({
+          title: 'Some alerts could not be acknowledged',
+          text: failures[0],
+        });
+      }
+      await load();
+    },
+    [core, load]
+  );
+
+  return { alerts, loading, error, reload: load, acknowledge, acknowledgeBulk };
 }
