@@ -101,6 +101,12 @@ export function SigmaImportModal({ onParsed, onClose }: Props) {
                   </li>
                 ))}
               </ul>
+              {/* v1.2.1 (tester finding): a real import failed because pasting had flattened the
+                  YAML indentation/list markers — steer people to the lossless path. */}
+              <p>
+                Tip: pasting from a browser or chat often mangles YAML indentation — the file
+                upload above preserves the rule exactly.
+              </p>
             </EuiCallOut>
           </>
         ) : null}
