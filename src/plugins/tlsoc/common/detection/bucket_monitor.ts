@@ -24,8 +24,10 @@ import { conditionGroupToLucene } from './lucene';
  * gotcha). The WHERE filter reuses the stateless Lucene compiler ({@link conditionGroupToLucene}).
  */
 
-/** The fixed name of the composite aggregation that the trigger reads buckets from. */
-const GROUPS_AGG = 'tlsoc_groups';
+/** The fixed name of the composite aggregation that the trigger reads buckets from. Exported so
+ * the v1.2.3 aggregation compiler (agg_compile.ts) emits the SAME group agg name — the alert
+ * pipeline and parent_bucket_path handling stay identical across both bucket compilers. */
+export const GROUPS_AGG = 'tlsoc_groups';
 
 export interface BucketLevelMonitor {
   type: 'monitor';

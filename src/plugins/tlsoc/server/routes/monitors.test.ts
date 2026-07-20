@@ -313,4 +313,241 @@ describe('registerMonitorRoutes', () => {
       expect(response.ok).not.toHaveBeenCalled();
     });
   });
+
+  describe('PPL fieldMap gate (W2 review BLOCKING-1 — the server is the unskippable layer)', () => {
+    /** dc(url.path) + by source.ip + = on http.method — every string-context position covered. */
+    const pplRule = {
+      name: 'Scanner',
+      severity: 'high',
+      index: 'security-logs',
+      pplText:
+        'source = security-logs | where http.method = "POST" | ' +
+        'stats dc(url.path) as paths by source.ip | where paths >= 40',
+      groupBy: ['source.ip'],
+      window: { value: 5, unit: 'MINUTES' },
+    };
+
+    /** Cluster truth: url.path is analyzed text WITH a keyword subfield; the rest need no map. */
+    const capsBody = {
+      indices: ['security-logs'],
+      fields: {
+        'source.ip': { ip: { type: 'ip', searchable: true, aggregatable: true } },
+        'http.method': { keyword: { type: 'keyword', searchable: true, aggregatable: true } },
+        'url.path': { text: { type: 'text', searchable: true, aggregatable: false } },
+        'url.path.keyword': {
+          keyword: { type: 'keyword', searchable: true, aggregatable: true },
+        },
+      },
+    };
+
+    function createSetup(fieldCapsBody: any) {
+      registerMonitorRoutes(router, logger, writerAuth);
+      const handler = findHandler(router, 'post', '/api/tlsoc/detection/monitors');
+      const soFind = jest.fn().mockResolvedValue({ saved_objects: [] });
+      const soCreate = jest.fn().mockResolvedValue({ id: 'so1' });
+      const transportRequest = jest.fn().mockResolvedValue({ body: { _id: 'm1' } });
+      const fieldCaps = jest.fn().mockResolvedValue({ body: fieldCapsBody });
+      const context = makeContext({
+        soClient: { find: soFind, create: soCreate },
+        esClient: { transport: { request: transportRequest }, fieldCaps },
+      });
+      const response = httpServerMock.createResponseFactory();
+      return { handler, context, response, transportRequest, fieldCaps };
+    }
+
+    it('a text-context field MISSING from the fieldMap 400s BY NAME, before any monitor exists', async () => {
+      const { handler, context, response, transportRequest } = createSetup(capsBody);
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'ppl', rule: pplRule }, // no fieldMap at all — the Path A client bypass
+      });
+
+      await handler(context, request, response);
+
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining('"url.path"') },
+      });
+      expect(response.ok).not.toHaveBeenCalled();
+      expect(transportRequest).not.toHaveBeenCalled(); // the monitor was never created
+    });
+
+    it('a correct fieldMap passes: the monitor is created and field_caps asked about map targets too', async () => {
+      const { handler, context, response, transportRequest, fieldCaps } = createSetup(capsBody);
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: {
+          mode: 'ppl',
+          rule: { ...pplRule, fieldMap: { 'url.path': 'url.path.keyword' } },
+        },
+      });
+
+      await handler(context, request, response);
+
+      expect(fieldCaps).toHaveBeenCalledWith(
+        expect.objectContaining({
+          index: 'security-logs',
+          fields: expect.arrayContaining(['url.path', 'url.path.keyword', 'source.ip']),
+        })
+      );
+      const postCall = transportRequest.mock.calls.find((c: any[]) => c[0].method === 'POST');
+      expect(postCall).toBeTruthy();
+      expect(response.ok).toHaveBeenCalled();
+      expect(response.customError).not.toHaveBeenCalled();
+    });
+
+    it('keyword/ip fields need no fieldMap entry at all', async () => {
+      const { handler, context, response } = createSetup(capsBody);
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: {
+          mode: 'ppl',
+          rule: {
+            ...pplRule,
+            pplText:
+              'source = security-logs | where http.method = "POST" | ' +
+              'stats count() as hits by source.ip | where hits > 5',
+            // no fieldMap — http.method (keyword) and source.ip (ip) resolve as themselves
+          },
+        },
+      });
+
+      await handler(context, request, response);
+
+      expect(response.ok).toHaveBeenCalled();
+      expect(response.customError).not.toHaveBeenCalled();
+    });
+
+    it('a fieldMap claiming a NONEXISTENT mapping 400s naming both field and claim', async () => {
+      const { handler, context, response } = createSetup(capsBody);
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: {
+          mode: 'ppl',
+          rule: { ...pplRule, fieldMap: { 'url.path': 'url.path.raw' } },
+        },
+      });
+
+      await handler(context, request, response);
+
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining('"url.path.raw"') },
+      });
+      expect(response.ok).not.toHaveBeenCalled();
+    });
+
+    it('zero matching concrete indices 400s with the "No indices currently match" message', async () => {
+      const { handler, context, response, transportRequest } = createSetup({
+        indices: [],
+        fields: {},
+      });
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: {
+          mode: 'ppl',
+          rule: { ...pplRule, fieldMap: { 'url.path': 'url.path.keyword' } },
+        },
+      });
+
+      await handler(context, request, response);
+
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining('No indices currently match') },
+      });
+      expect(transportRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('custom_query pre-save validation (W2 review BLOCKING-2)', () => {
+    const cqRule = {
+      name: 'Admin probe',
+      severity: 'high',
+      index: 'security-logs',
+      language: 'lucene',
+      queryText: 'url.path:*admin*',
+    };
+
+    /** Transport mock that answers _validate/query with `validateBody` and everything else as create. */
+    function createSetup(validateBody: any) {
+      registerMonitorRoutes(router, logger, writerAuth);
+      const handler = findHandler(router, 'post', '/api/tlsoc/detection/monitors');
+      const soFind = jest.fn().mockResolvedValue({ saved_objects: [] });
+      const soCreate = jest.fn().mockResolvedValue({ id: 'so1' });
+      const transportRequest = jest.fn().mockImplementation(({ path }: any) =>
+        String(path).includes('/_validate/query')
+          ? Promise.resolve({ body: validateBody })
+          : Promise.resolve({ body: { _id: 'm1' } })
+      );
+      const context = makeContext({
+        soClient: { find: soFind, create: soCreate },
+        esClient: { transport: { request: transportRequest } },
+      });
+      const response = httpServerMock.createResponseFactory();
+      return { handler, context, response, transportRequest };
+    }
+
+    const monitorCreateCalls = (transportRequest: jest.Mock) =>
+      transportRequest.mock.calls.filter(
+        (c: any[]) => c[0].method === 'POST' && c[0].path === '/_plugins/_alerting/monitors'
+      );
+
+    it('invalid Lucene 400s with the cluster parse error surfaced; no monitor is created', async () => {
+      const parseError =
+        "ParseException[Cannot parse 'url.path:(': Encountered \"<EOF>\" at line 1, column 10.]";
+      const { handler, context, response, transportRequest } = createSetup({
+        valid: false,
+        _shards: { total: 1, successful: 1, failed: 0 },
+        explanations: [{ index: 'security-logs', valid: false, error: parseError }],
+      });
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'custom_query', rule: { ...cqRule, queryText: 'url.path:(' } },
+      });
+
+      await handler(context, request, response);
+
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining(parseError) },
+      });
+      expect(response.ok).not.toHaveBeenCalled();
+      expect(monitorCreateCalls(transportRequest)).toHaveLength(0);
+    });
+
+    it('a valid query passes: the exact executed Lucene is validated, then the monitor created', async () => {
+      const { handler, context, response, transportRequest } = createSetup({
+        valid: true,
+        _shards: { total: 2, successful: 2, failed: 0 },
+      });
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'custom_query', rule: cqRule },
+      });
+
+      await handler(context, request, response);
+
+      const validateCall = transportRequest.mock.calls.find((c: any[]) =>
+        String(c[0].path).includes('/_validate/query')
+      );
+      expect(validateCall).toBeTruthy();
+      expect(validateCall![0].body).toEqual({
+        query: { query_string: { query: 'url.path:*admin*', analyze_wildcard: true } },
+      });
+      expect(monitorCreateCalls(transportRequest)).toHaveLength(1);
+      expect(response.ok).toHaveBeenCalled();
+    });
+
+    it('THE 0-SHARDS TRAP: "valid" against zero shards 400s (nothing was actually validated)', async () => {
+      const { handler, context, response, transportRequest } = createSetup({
+        valid: true,
+        _shards: { total: 0, successful: 0, failed: 0 },
+      });
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'custom_query', rule: cqRule },
+      });
+
+      await handler(context, request, response);
+
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining('no indices currently match') },
+      });
+      expect(monitorCreateCalls(transportRequest)).toHaveLength(0);
+    });
+  });
 });

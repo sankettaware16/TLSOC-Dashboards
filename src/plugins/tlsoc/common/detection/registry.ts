@@ -7,8 +7,15 @@ import { RuleDefinition, ThresholdRuleDefinition } from './types';
 import { assertValidRule, assertValidThresholdRule } from './internal';
 import { compileToDocLevelMonitor } from './monitor';
 import { compileToBucketLevelMonitor } from './bucket_monitor';
+import { compileAggregationRule, thresholdRuleToAggregationInput } from './agg_compile';
 import { compileToSigma } from './sigma';
 import { compileToSigmaCorrelation } from './sigma_correlation';
+import { assertValidPplRule, pplRuleToCompileInput, PplRuleDefinition } from './ppl_rule';
+import {
+  assertValidCustomQueryRule,
+  compileCustomQueryToMonitor,
+  CustomQueryRuleDefinition,
+} from './custom_query';
 
 /**
  * The rule-TYPE registry (v1.2.3 D1) — the ONE place a detection type's execution contract lives.
@@ -30,7 +37,7 @@ import { compileToSigmaCorrelation } from './sigma_correlation';
  */
 
 /** The registered detection type ids — the single source of truth for the (persisted) mode union. */
-export type DetectionMode = 'stateful' | 'stateless';
+export type DetectionMode = 'stateful' | 'stateless' | 'ppl' | 'custom_query';
 
 /**
  * What KIND of Alerting monitor a type compiles to. This — not the type id — is what the shared
@@ -56,11 +63,15 @@ const statefulType: RuleTypeDefinition = {
   id: 'stateful',
   monitorKind: 'bucket',
   validate: (rule) => assertValidThresholdRule(rule as ThresholdRuleDefinition),
-  compile: (rule) =>
-    (compileToBucketLevelMonitor(rule as ThresholdRuleDefinition) as unknown) as Record<
-      string,
-      unknown
-    >,
+  compile: (rule) => {
+    // v1.2.3 D4 routing: a rule WITH `advanced` metrics compiles through the aggregation
+    // compiler; WITHOUT, the UNTOUCHED legacy path — stateful_golden.test.ts stays
+    // byte-identical (the "existing rules keep working unchanged" guarantee).
+    const threshold = rule as ThresholdRuleDefinition;
+    return (threshold.advanced
+      ? (compileAggregationRule(thresholdRuleToAggregationInput(threshold)) as unknown)
+      : (compileToBucketLevelMonitor(threshold) as unknown)) as Record<string, unknown>;
+  },
   toSigma: (rule) => compileToSigmaCorrelation(rule as ThresholdRuleDefinition),
 };
 
@@ -73,10 +84,44 @@ const statelessType: RuleTypeDefinition = {
   toSigma: (rule) => compileToSigma(rule as RuleDefinition),
 };
 
-/** Insertion order is presentation order (the UI card grid mirrors it): stateful is the default. */
+/** v1.2.3 D2: the analyst writes the match as a DQL/Lucene query instead of condition rows.
+ * Executes exactly like a stateless rule (doc-level monitor — findings + related docs); DQL goes
+ * through the clean-room subset translator, whose rejections validate/compile re-throw VERBATIM.
+ * NO toSigma — custom queries are not Sigma-exportable in v1.2.3. */
+const customQueryType: RuleTypeDefinition = {
+  id: 'custom_query',
+  monitorKind: 'doc',
+  validate: (rule) => assertValidCustomQueryRule(rule as CustomQueryRuleDefinition),
+  compile: (rule) =>
+    (compileCustomQueryToMonitor(rule as CustomQueryRuleDefinition) as unknown) as Record<
+      string,
+      unknown
+    >,
+};
+
+/** v1.2.3 D3: the rule IS a PPL query (stored verbatim; re-parsed + lowered on every compile into
+ * the shared aggregation compiler — the lossless-edit contract). NO toSigma — PPL rules are not
+ * Sigma-exportable (Sigma correlation cannot express multi-metric having conditions). */
+const pplType: RuleTypeDefinition = {
+  id: 'ppl',
+  monitorKind: 'bucket',
+  validate: (rule) => assertValidPplRule(rule as PplRuleDefinition),
+  compile: (rule) =>
+    (compileAggregationRule(
+      pplRuleToCompileInput(rule as PplRuleDefinition)
+    ) as unknown) as Record<string, unknown>,
+};
+
+/**
+ * Insertion order is presentation order (the UI card grid mirrors it), simplest first —
+ * custom_query, stateless, stateful, ppl. The BUILDER's default selection stays 'stateful'
+ * (its seed default), independent of card order.
+ */
 const REGISTRY: Readonly<Record<DetectionMode, RuleTypeDefinition>> = {
-  stateful: statefulType,
+  custom_query: customQueryType,
   stateless: statelessType,
+  stateful: statefulType,
+  ppl: pplType,
 };
 
 /** All registered types, in registration order. */

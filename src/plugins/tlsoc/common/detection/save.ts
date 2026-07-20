@@ -4,6 +4,8 @@
  */
 
 import { RuleDefinition, ThresholdRuleDefinition } from './types';
+import { PplRuleDefinition } from './ppl_rule';
+import { CustomQueryRuleDefinition } from './custom_query';
 import { DetectionMode, getType } from './registry';
 
 /**
@@ -37,8 +39,16 @@ export interface DetectionRuleAttributes {
   severity: string;
   /** The id of the OpenSearch Alerting monitor this rule created (the executor). */
   monitorId: string;
-  /** The exact no-code rule the user built — the lossless edit round-trip source. */
-  rule: RuleDefinition | ThresholdRuleDefinition;
+  /**
+   * The exact rule the user built (no-code IR, PPL text envelope, or custom-query text) — the
+   * lossless edit round-trip source. Stored in the UNMAPPED `rule` attribute, so every shape
+   * round-trips via `_source` with zero migration (v1.2.3 type-model discipline).
+   */
+  rule:
+    | RuleDefinition
+    | ThresholdRuleDefinition
+    | PplRuleDefinition
+    | CustomQueryRuleDefinition;
   /**
    * For STATELESS rules on a patterned/dotted index only: a dot-free "display identity" alias name
    * derived from the rule's index PATTERN (`deriveAliasName(rule.index)`). Kept for backcompat with

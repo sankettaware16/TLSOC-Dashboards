@@ -5,6 +5,8 @@
 
 import { HttpAuth, IRouter, Logger, SavedObjectsServiceStart } from '../../../../core/server';
 import { registerExecuteDetectionRoute } from './detection';
+import { registerPplPreviewRoutes } from './ppl_preview';
+import { registerDetectionValidateRoutes } from './detection_validate';
 import { registerMonitorRoutes } from './monitors';
 import { registerAlertRoutes } from './alerts';
 import { registerCaseRoutes } from './cases';
@@ -23,6 +25,10 @@ export function registerDetectionRoutes(
   workspaceEnabled?: boolean
 ) {
   registerExecuteDetectionRoute(router, logger);
+  // v1.2.3 Wave 2: read-only preview/validate routes — same policy class as the _execute dry-run
+  // (asCurrentUser, open to any authenticated user, no role guard; they write nothing).
+  registerPplPreviewRoutes(router, logger);
+  registerDetectionValidateRoutes(router, logger);
   // Overview aggregates the agentless log pipeline's output; read-only, asCurrentUser-scoped.
   if (overview) {
     registerOverviewRoutes(router, logger, overview);

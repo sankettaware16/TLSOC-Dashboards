@@ -21,7 +21,7 @@ describe('type_registry ⇄ common registry parity', () => {
       expect(t.listBadge.label).toBeTruthy();
       expect(t.listBadge.color).toBeTruthy();
       expect(t.editor).toBeTruthy();
-      expect(['bucket-dryrun', 'search-sample']).toContain(t.previewStrategy);
+      expect(['bucket-dryrun', 'search-sample', 'ppl-preview']).toContain(t.previewStrategy);
     });
   });
 

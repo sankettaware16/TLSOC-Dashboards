@@ -6,7 +6,13 @@
 import { useState } from 'react';
 import { CoreStart } from 'opensearch-dashboards/public';
 import { DataPublicPluginStart } from '../../../data/public';
-import { DetectionMode, RuleDefinition, ThresholdRuleDefinition } from '../../common/detection';
+import {
+  DetectionMode,
+  PplRuleDefinition,
+  RuleDefinition,
+  ThresholdRuleDefinition,
+} from '../../common/detection';
+import type { CustomQueryRuleDefinition } from '../../common/detection/custom_query';
 import { DetectionBuilder } from './detection_builder';
 import { SavedRulesList } from './saved_rules_list';
 import { SigmaImportModal } from './sigma_import_modal';
@@ -19,7 +25,7 @@ interface Props {
 interface EditTarget {
   soId: string;
   mode: DetectionMode;
-  rule: RuleDefinition | ThresholdRuleDefinition;
+  rule: RuleDefinition | ThresholdRuleDefinition | PplRuleDefinition | CustomQueryRuleDefinition;
   enabled: boolean;
 }
 

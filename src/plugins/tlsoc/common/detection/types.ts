@@ -18,6 +18,10 @@
  * bucket-level Alerting monitor, handled by a separate compiler (Task 3.2).
  */
 
+// Type-only import (agg_types has no runtime exports, and its own import of this file is
+// type-only too) — the types ⇄ agg_types cycle is fully erased at runtime.
+import type { AggregationSpec } from './agg_types';
+
 /** The v1 operator set. Every operator here compiles to BOTH Sigma and a doc-level monitor query. */
 export type DetectionOperator =
   | 'equals'
@@ -212,4 +216,21 @@ export interface ThresholdRuleDefinition extends RuleMetadataFields {
    * also why there is deliberately no separate "look-back" concept.
    */
   runEvery?: TimeWindow;
+  /**
+   * OPTIONAL enhanced metrics (v1.2.3 D4). ABSENT = the legacy count-only threshold path — the
+   * rule validates and compiles byte-identically through {@link compileToBucketLevelMonitor}
+   * (the stateful goldens' guarantee). PRESENT = the rule compiles through
+   * `compileAggregationRule` (agg_compile.ts) instead: per-group metrics (cardinality,
+   * value_count, sum/avg/min/max, filtered counts) plus a multi-comparison trigger condition.
+   *
+   * Contract notes:
+   * - `advanced.by` is IGNORED at compile — `groupBy` is authoritative (it also feeds the alert
+   *   flyout's group-key labels via RuleRef.groupBy). Producers should keep them mirrored.
+   * - When `advanced` is present, `advanced.having` IS the trigger condition — the simple
+   *   `threshold` above is superseded (not applied). Reference the reserved `_count` alias in
+   *   `having` to keep an event-count comparison.
+   * - Round-trips via the unmapped SO `rule` attribute with ZERO migration (the established
+   *   idiom, see {@link RuleMetadataFields}); legacy rules simply lack the field.
+   */
+  advanced?: AggregationSpec;
 }

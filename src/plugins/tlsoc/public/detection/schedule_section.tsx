@@ -14,13 +14,17 @@ import {
   EuiSpacer,
   EuiTitle,
 } from '@elastic/eui';
-import { DetectionMode, TimeWindow } from '../../common/detection';
+import { TimeWindow } from '../../common/detection';
 
 interface Props {
-  mode: DetectionMode;
-  /** The configured cadence R. Undefined = "use the default" (see the per-mode helper text). */
+  /** The configured cadence R. Undefined = "use the default" (see the per-kind helper text). */
   runEvery?: TimeWindow;
-  /** The threshold window T (stateful mode only) — used to validate R ≤ T for display purposes. */
+  /**
+   * The rule window T — passed by the builder for BUCKET-kind types only (stateful, ppl), where
+   * it caps the cadence (R ≤ T, displayed here; the compilers enforce it authoritatively).
+   * Absent = a doc-kind type (per-document scanning, 1-minute default). Keyed off window
+   * presence rather than a mode literal so new bucket types need no edit here (v1.2.3 W2).
+   */
   window?: TimeWindow;
   onChange: (runEvery: TimeWindow | undefined) => void;
 }
@@ -53,9 +57,8 @@ function minutesOf(tw: TimeWindow): number {
  * touches the threshold window T (the range filter/timespan) — that stays wired to the "Threshold"
  * panel elsewhere in the builder. Wiring this into DetectionBuilder is the integrator's job.
  */
-export function ScheduleSection({ mode, runEvery, window, onChange }: Props) {
-  const defaultUnit: TimeWindow['unit'] =
-    mode === 'stateful' && window ? window.unit : 'MINUTES';
+export function ScheduleSection({ runEvery, window, onChange }: Props) {
+  const defaultUnit: TimeWindow['unit'] = window ? window.unit : 'MINUTES';
   // Tracks the unit shown in the dropdown even while the value field is empty (no runEvery yet), so
   // picking a unit before typing a number doesn't get lost.
   const [unit, setUnit] = useState<TimeWindow['unit']>(runEvery?.unit ?? defaultUnit);
@@ -66,15 +69,13 @@ export function ScheduleSection({ mode, runEvery, window, onChange }: Props) {
 
   const displayValue = runEvery?.value ?? '';
 
-  const isInvalid =
-    mode === 'stateful' && !!runEvery && !!window && minutesOf(runEvery) > minutesOf(window);
+  const isInvalid = !!runEvery && !!window && minutesOf(runEvery) > minutesOf(window);
 
-  const helpText =
-    mode === 'stateful'
-      ? 'Default: once per threshold window (T). Must be ≤ the window — the evaluation window ' +
-        'itself stays T; that is also why there is no separate "look-back": widening the window ' +
-        'would change what "more than N in T" means.'
-      : 'How often new events are scanned for matches. Default: every 1 minute.';
+  const helpText = window
+    ? 'Default: once per rule window (T). Must be ≤ the window — the evaluation window ' +
+      'itself stays T; that is also why there is no separate "look-back": widening the window ' +
+      'would change what "more than N in T" means.'
+    : 'How often new events are scanned for matches. Default: every 1 minute.';
 
   return (
     <EuiPanel hasShadow={false} hasBorder>

@@ -13,18 +13,27 @@ import {
   workspaceForbidden,
 } from '../lib/authz';
 import {
+  ANALYZED_TEXT_TYPES,
   DetectionMode,
   DetectionRuleAttributes,
+  PplRuleDefinition,
   RuleDefinition,
   ThresholdRuleDefinition,
   buildMonitorForSave,
+  collectPplStringContextFields,
   deriveAliasName,
   desiredExecutionTargets,
   executionTargetsDiffer,
   getType,
   isValidMode,
+  parsePpl,
   unknownTypeMessage,
 } from '../../common/detection';
+import {
+  CustomQueryRuleDefinition,
+  compileCustomQueryText,
+} from '../../common/detection/custom_query';
+import { validateLuceneQuery } from './detection_validate';
 import { DETECTION_RULE_SO_TYPE } from '../saved_objects';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -72,6 +81,119 @@ async function resolveConcreteIndices(
   }
 }
 
+/**
+ * v1.2.3 W2 review BLOCKING-1 (the server layer — the UNSKIPPABLE gate): a 'ppl' rule's `fieldMap`
+ * is produced by the builder from data-view field caps, but nothing forces a caller to send one
+ * (curl, an import, a client bug) — and a PPL rule whose string-context fields hit analyzed text
+ * WITHOUT a keyword mapping compiles into a monitor that aggregates/matches on raw text and dies
+ * at runtime with NO alert and NO error (the silent-dead-rule class, research_r2 §a). So the save
+ * path re-parses the query, re-derives its string-context fields with the SAME shared enumerator
+ * the builder uses ({@link collectPplStringContextFields}), asks the CLUSTER what those fields
+ * really are (field_caps, caller credentials), and 400s BY NAME any analyzed-text field the
+ * fieldMap does not correctly cover. Keyword/ip/date/numeric fields — and fields absent from the
+ * matching indices — need no entry and pass untouched.
+ */
+async function assertPplFieldMapAgainstCluster(
+  esClient: EsClient,
+  rule: Record<string, unknown>
+): Promise<void> {
+  const pplRule = (rule as unknown) as PplRuleDefinition;
+  const parsed = parsePpl(typeof pplRule.pplText === 'string' ? pplRule.pplText : '');
+  if (!parsed.ok) return; // prepareMonitor's compile 400s parse errors with a better message
+  const rawFields = collectPplStringContextFields(parsed.rule);
+  if (rawFields.length === 0) return;
+
+  const fieldMap: Record<string, string> =
+    pplRule.fieldMap && typeof pplRule.fieldMap === 'object' ? pplRule.fieldMap : {};
+  // Ask about the raw fields AND their claimed mappings, so a bogus mapping is caught too.
+  const wanted = new Set<string>(rawFields);
+  rawFields.forEach((f) => {
+    const mapped = fieldMap[f];
+    if (typeof mapped === 'string' && mapped !== '') wanted.add(mapped);
+  });
+
+  const noIndices = `No indices currently match "${pplRule.index}", so there is nothing for this rule to run against yet.`;
+  let caps: any;
+  try {
+    const resp = await esClient.fieldCaps({
+      index: pplRule.index,
+      fields: [...wanted],
+      allow_no_indices: true,
+      ignore_unavailable: true,
+    });
+    caps = (resp as any).body ?? {};
+  } catch (err: any) {
+    if ((err?.meta?.statusCode ?? err?.statusCode) === 404) {
+      throw new RouteError(400, noIndices);
+    }
+    throw err;
+  }
+  // Zero matching concrete indices → field_caps "succeeds" having checked NOTHING (the same trap
+  // as _validate's 0-shards) — refuse, mirroring the doc-level path's no-matching-indices 400.
+  if (((caps?.indices as string[] | undefined) ?? []).length === 0) {
+    throw new RouteError(400, noIndices);
+  }
+
+  const capsFields: Record<string, Record<string, unknown>> = caps?.fields ?? {};
+  const typesOf = (name: string): string[] => Object.keys(capsFields[name] ?? {});
+
+  for (const field of rawFields) {
+    const analyzed = typesOf(field).filter((t) => ANALYZED_TEXT_TYPES.has(t));
+    if (analyzed.length === 0) continue; // keyword/ip/date/numeric (or absent) — passes as-is
+    const mapped = fieldMap[field];
+    if (typeof mapped !== 'string' || mapped === '') {
+      throw new RouteError(
+        400,
+        `PPL rule field "${field}" is analyzed text ("${analyzed[0]}") on "${pplRule.index}" — ` +
+          'grouping or matching it exactly would fail silently at monitor runtime. Re-save the ' +
+          'rule from the builder with its matching data view selected so the field maps to a ' +
+          `keyword subfield (e.g. "${field}.keyword"), or use a keyword field in the query.`
+      );
+    }
+    const mappedTypes = typesOf(mapped);
+    if (mappedTypes.length === 0) {
+      throw new RouteError(
+        400,
+        `PPL rule field "${field}" maps to "${mapped}", but "${mapped}" does not exist on ` +
+          `"${pplRule.index}". Re-save the rule from the builder with its matching data view selected.`
+      );
+    }
+    if (mappedTypes.some((t) => ANALYZED_TEXT_TYPES.has(t))) {
+      throw new RouteError(
+        400,
+        `PPL rule field "${field}" maps to "${mapped}", which is itself analyzed text ` +
+          `("${mappedTypes.find((t) => ANALYZED_TEXT_TYPES.has(t))}") — map it to a keyword ` +
+          'subfield instead.'
+      );
+    }
+  }
+}
+
+/**
+ * v1.2.3 W2 review BLOCKING-2 (the server layer): the Alerting engine NEVER validates doc-level
+ * queries — a malformed Lucene query saves fine and matches nothing forever, with no error
+ * (research_r2 §b). So before a 'custom_query' monitor is created/updated, the EXACT executed
+ * Lucene (for 'kuery' rules, the translation — belt and braces on top of the client-side subset
+ * check) is validated against the cluster's own parser via the shared detection_validate helper.
+ * An invalid query or a nothing-matching index both 400 with the parser's/trap's own words.
+ */
+async function assertCustomQueryValidates(
+  esClient: EsClient,
+  rule: Record<string, unknown>
+): Promise<void> {
+  const cqRule = (rule as unknown) as CustomQueryRuleDefinition;
+  // prepareMonitor's compile already ran assertValidCustomQueryRule + the DQL translation, so
+  // this re-derivation cannot throw here; it yields the exact string the monitor will run.
+  const lucene = compileCustomQueryText(cqRule);
+  const verdict = await validateLuceneQuery(esClient, cqRule.index, lucene);
+  if (!verdict.valid) {
+    throw new RouteError(
+      400,
+      `The query did not validate against "${cqRule.index}": ${verdict.reason}`
+    );
+  }
+}
+
 /** Idempotently ADD one dot-free alias per concrete index (one `/_aliases` call, one action each). */
 async function addPerIndexAliases(esClient: EsClient, concreteIndices: string[]): Promise<void> {
   await esClient.transport.request({
@@ -115,6 +237,16 @@ async function prepareMonitor(
     ) as any;
   } catch (err) {
     throw new RouteError(400, `Rule did not compile: ${err.message}`);
+  }
+
+  // v1.2.3 W2 review: server-side silent-dead-rule gates. They run AFTER compile (so parse/shape
+  // errors keep their richer messages) but BEFORE anything touches the cluster's monitors — with
+  // the CALLER's credentials and the CLUSTER's own metadata/parsers, so no client (the builder,
+  // curl, an import) can skip them. Shared by create AND update.
+  if (mode === 'ppl') {
+    await assertPplFieldMapAgainstCluster(esClient, rule);
+  } else if (mode === 'custom_query') {
+    await assertCustomQueryValidates(esClient, rule);
   }
 
   let executionAlias: string | undefined;

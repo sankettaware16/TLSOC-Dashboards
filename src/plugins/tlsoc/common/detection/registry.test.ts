@@ -34,13 +34,22 @@ const stateful: ThresholdRuleDefinition = {
 };
 
 describe('rule-type registry — the two existing types wrap their compilers verbatim', () => {
-  it('registers exactly the two existing type ids', () => {
-    expect(new Set(listTypes().map((t) => t.id))).toEqual(new Set(['stateful', 'stateless']));
+  it('registers exactly the v1.2.3 Wave-2 type id set', () => {
+    expect(new Set(listTypes().map((t) => t.id))).toEqual(
+      new Set(['stateful', 'stateless', 'ppl', 'custom_query'])
+    );
   });
 
-  it('monitorKind: stateless is doc-level, stateful is bucket-level', () => {
+  it('monitorKind: stateless/custom_query are doc-level, stateful/ppl are bucket-level', () => {
     expect(getType('stateless').monitorKind).toBe('doc');
+    expect(getType('custom_query').monitorKind).toBe('doc');
     expect(getType('stateful').monitorKind).toBe('bucket');
+    expect(getType('ppl').monitorKind).toBe('bucket');
+  });
+
+  it('the new Wave-2 types are NOT Sigma-exportable (no toSigma entry)', () => {
+    expect(getType('ppl').toSigma).toBeUndefined();
+    expect(getType('custom_query').toSigma).toBeUndefined();
   });
 
   it("compile dispatches to the existing compilers verbatim (the goldens' guarantee holds)", () => {
@@ -66,18 +75,20 @@ describe('rule-type registry — the two existing types wrap their compilers ver
 describe('rule-type registry — unknown ids are rejected BY NAME', () => {
   it('getType throws naming the unknown id and listing the registered ones', () => {
     expect(() => getType('sequence')).toThrow(/"sequence"/);
-    expect(() => getType('sequence')).toThrow(/stateful, stateless/);
+    expect(() => getType('sequence')).toThrow(/custom_query, stateless, stateful, ppl/);
   });
 
   it('isValidMode is the runtime membership check', () => {
     expect(isValidMode('stateful')).toBe(true);
     expect(isValidMode('stateless')).toBe(true);
+    expect(isValidMode('ppl')).toBe(true);
+    expect(isValidMode('custom_query')).toBe(true);
     expect(isValidMode('sequence')).toBe(false);
     expect(isValidMode('')).toBe(false);
   });
 
   it('unknownTypeMessage names the id (the routes reuse it for their 400s)', () => {
-    expect(unknownTypeMessage('ppl')).toContain('"ppl"');
-    expect(unknownTypeMessage('ppl')).toContain('stateful, stateless');
+    expect(unknownTypeMessage('sequence')).toContain('"sequence"');
+    expect(unknownTypeMessage('sequence')).toContain('custom_query, stateless, stateful, ppl');
   });
 });

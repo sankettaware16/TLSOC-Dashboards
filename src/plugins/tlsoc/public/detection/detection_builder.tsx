@@ -35,19 +35,30 @@ import {
 import { CoreStart } from 'opensearch-dashboards/public';
 import { DataPublicPluginStart } from '../../../data/public';
 import {
+  AggregationSpec,
+  ANALYZED_TEXT_TYPES,
   Condition,
   ConditionGroup,
   CountThreshold,
   DetectionMode,
+  PplRuleDefinition,
   RuleDefinition,
   RuleMetadataFields,
   Severity,
   ThreatEntry,
   ThresholdRuleDefinition,
   TimeWindow,
+  collectPplStringContextFields,
   deriveAliasName,
   getType,
+  parsePpl,
 } from '../../common/detection';
+import type {
+  CustomQueryLanguage,
+  CustomQueryRuleDefinition,
+} from '../../common/detection/custom_query';
+import { CustomQueryPreview } from './custom_query_preview';
+import type { PplPreviewData } from './ppl_preview_table';
 import { MitreTtpPicker } from './mitre_ttp_picker';
 import { ScheduleSection } from './schedule_section';
 import { getUiType, listUiTypes } from './type_registry';
@@ -61,7 +72,11 @@ interface Props {
   editSoId?: string;
   /** Initial mode + rule to hydrate the form from (the lossless edit round-trip). */
   initialMode?: DetectionMode;
-  initialRule?: RuleDefinition | ThresholdRuleDefinition;
+  initialRule?:
+    | RuleDefinition
+    | ThresholdRuleDefinition
+    | PplRuleDefinition
+    | CustomQueryRuleDefinition;
   /** Initial enabled state (edit hydration). Defaults to true for a brand-new detection. */
   initialEnabled?: boolean;
   /** Warnings from a Sigma import that produced this rule — surfaced at the top of the form. */
@@ -75,7 +90,11 @@ const DEFAULT_CONDITION: Condition = { field: '', operator: 'exists' };
 /** Compute initial form values from a saved rule (edit hydration), or defaults for a new rule. */
 function seedFrom(
   initialMode?: DetectionMode,
-  initialRule?: RuleDefinition | ThresholdRuleDefinition
+  initialRule?:
+    | RuleDefinition
+    | ThresholdRuleDefinition
+    | PplRuleDefinition
+    | CustomQueryRuleDefinition
 ) {
   const mode: DetectionMode = initialMode ?? 'stateful';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -84,13 +103,18 @@ function seedFrom(
   const conditions: Condition[] = grp?.conditions?.length
     ? grp.conditions.map((c: Condition) => ({ ...c }))
     : [{ ...DEFAULT_CONDITION }];
+  const savedGroupBy = (r?.groupBy as string[]) ?? [];
   return {
     mode,
     name: (r?.name as string) ?? '',
     severity: (r?.severity as Severity) ?? 'high',
     logic: (grp?.logic as ConditionGroup['logic']) ?? 'AND',
     conditions,
-    groupBy: (r?.groupBy as string[]) ?? [],
+    // The two group-by slices are PER-TYPE (W2 review): the PPL editor force-mirrors its query's
+    // by-fields into whatever groupBy state it is handed, so sharing one slice would let a visit
+    // to the PPL card clobber an in-progress threshold draft's group-bys (cross-type leak).
+    groupBy: mode === 'ppl' ? [] : savedGroupBy,
+    pplGroupBy: mode === 'ppl' ? savedGroupBy : [],
     windowValue: (r?.window?.value as number) ?? 5,
     windowUnit: (r?.window?.unit as TimeWindow['unit']) ?? 'MINUTES',
     thresholdOp: (r?.threshold?.operator as CountThreshold['operator']) ?? 'gt',
@@ -104,6 +128,16 @@ function seedFrom(
     references: (r?.references as string[]) ?? [],
     // WS-20 (PROB-20): the schedule cadence R — round-trips losslessly, undefined = legacy default.
     runEvery: r?.runEvery as TimeWindow | undefined,
+    // v1.2.3 W2a (D4): the stateful rule's optional advanced aggregation spec.
+    advanced: r?.advanced as AggregationSpec | undefined,
+    // v1.2.3 W2b (D3): the PPL rule's query text (the lossless edit source of truth).
+    pplText: (r?.pplText as string) ?? '',
+    // W2 review (BLOCKING-1): the SAVED fieldMap — the edit round-trip keeps it until a fresh
+    // field-caps resolution SUCCEEDS, so a PUT can never silently strip a correct map.
+    fieldMap: (r?.fieldMap as Record<string, string> | undefined) ?? undefined,
+    // v1.2.3 W2c (D2): the custom-query rule's text + language (IR field is `language`).
+    queryText: (r?.queryText as string) ?? '',
+    queryLanguage: (r?.language as CustomQueryLanguage) ?? 'kuery',
   };
 }
 
@@ -120,9 +154,12 @@ function cleanConditions(conditions: Condition[]): Condition[] {
 }
 
 /**
- * The no-code stateful detection builder. The analyst assembles a "> N within T grouped by …" rule
- * and dry-runs it against real data via the proven /api/tlsoc/detection/_execute route (Task 3.3).
- * The builder never compiles client-side — it sends the structured rule; the server compiles + runs.
+ * The detection builder — shared chrome (type cards, data source, schedule, rule details, triage,
+ * save) around a per-type editor slot resolved from the UI registry (v1.2.3 D1). All form state
+ * lives HERE (switching type cards never loses in-progress work); each mode's currentRule branch
+ * reads only its own slice, so no type's state leaks into another's save payload. The builder
+ * never persists a client-side compile — Save sends the structured rule; the server re-validates,
+ * compiles, and creates the monitor.
  */
 export function DetectionBuilder({
   core,
@@ -150,12 +187,24 @@ export function DetectionBuilder({
   const [logic, setLogic] = useState<ConditionGroup['logic']>(seed.logic);
   const [conditions, setConditions] = useState<Condition[]>(seed.conditions);
   const [groupBy, setGroupBy] = useState<string[]>(seed.groupBy);
+  // W2 review: PPL keeps its OWN group-by slice — the PPL editor force-mirrors the query's
+  // by-fields into whatever setter it is handed, so handing it the shared `groupBy` would
+  // clobber a threshold draft's group-bys the moment the PPL card is visited (cross-type leak).
+  const [pplGroupBy, setPplGroupBy] = useState<string[]>(seed.pplGroupBy);
   const [windowValue, setWindowValue] = useState<number>(seed.windowValue);
   const [windowUnit, setWindowUnit] = useState<TimeWindow['unit']>(seed.windowUnit);
   const [thresholdOp, setThresholdOp] = useState<CountThreshold['operator']>(seed.thresholdOp);
   const [thresholdValue, setThresholdValue] = useState<number>(seed.thresholdValue);
   const [from, setFrom] = useState('2026-05-16T10:00:00Z');
   const [to, setTo] = useState('2026-05-16T10:02:00Z');
+
+  // v1.2.3 W2a (D4): the stateful rule's optional advanced metrics spec.
+  const [advanced, setAdvanced] = useState<AggregationSpec | undefined>(seed.advanced);
+  // v1.2.3 W2b (D3): the PPL rule's query text.
+  const [pplText, setPplText] = useState<string>(seed.pplText);
+  // v1.2.3 W2c (D2): the custom-query rule's text + language.
+  const [queryText, setQueryText] = useState<string>(seed.queryText);
+  const [queryLanguage, setQueryLanguage] = useState<CustomQueryLanguage>(seed.queryLanguage);
 
   // Triage & context (optional) — WS-1, PROB-1.
   const [threat, setThreat] = useState<ThreatEntry[]>(seed.threat);
@@ -181,6 +230,16 @@ export function DetectionBuilder({
   const [saveResult, setSaveResult] = useState<{ id: string; name: string } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // W2 review (BLOCKING-2): the server-side `_validate` verdict for the CURRENT custom query.
+  // The builder owns it because Save is gated on it; the editor only requests runs (blur/submit)
+  // and renders the state. `key` records which (language, index, query) triple a verdict is FOR —
+  // a verdict for any other triple is stale and treated as 'idle' (never trusted, never shown).
+  const [queryCheck, setQueryCheck] = useState<{
+    status: 'idle' | 'checking' | 'valid' | 'invalid' | 'error';
+    key?: string;
+    reason?: string;
+  }>({ status: 'idle' });
+
   // The active type's two registry halves: execution contract (common) + editor/preview UI (public).
   const ruleType = getType(mode);
   const uiType = getUiType(mode);
@@ -194,11 +253,86 @@ export function DetectionBuilder({
   };
 
   /**
+   * v1.2.3 D3: resolve the PPL query's string-context fields against the data view's field caps
+   * at BUILD time (the shared enumerator `collectPplStringContextFields` defines the positions;
+   * the save route re-checks the same set against the CLUSTER's field caps — the unskippable
+   * layer). An analyzed-text field (the ANALYZED_TEXT_TYPES family, not just `text`) WITH an
+   * aggregatable `.keyword` sibling maps to it; one WITHOUT blocks the save naming the field
+   * (cardinality/terms on text fails at monitor runtime with NO alert — the silent-failure
+   * class). Non-text fields need no entry (pass-through).
+   *
+   * W2 review (BLOCKING-1): the resolution is a three-state VERDICT, never a silent {}. It only
+   * reports 'ok' when a data view matching the query's `source` is selected AND its fields have
+   * loaded AND every text field resolved; anything less is 'blocked' with the reason (no data
+   * view / source mismatch / still loading / unresolvable field) and Save stays disabled. 'idle'
+   * = nothing to resolve yet (not a PPL rule, empty query, or a parse error the validator names
+   * with a better message).
+   */
+  const pplFieldResolution = useMemo<
+    | { status: 'ok'; fieldMap: Record<string, string> }
+    | { status: 'blocked'; reason: string }
+    | { status: 'idle' }
+  >(() => {
+    if (mode !== 'ppl' || pplText.trim() === '') {
+      return { status: 'idle' };
+    }
+    const parsed = parsePpl(pplText);
+    if (!parsed.ok) {
+      // Parse errors are surfaced (and save is gated) by the preview compile below.
+      return { status: 'idle' };
+    }
+    const source = parsed.rule.indices.join(',');
+    if (!selectedView) {
+      return {
+        status: 'blocked',
+        reason:
+          `Select the data view matching the query's source ("${source}") — PPL rules resolve ` +
+          'text-field mappings from its field caps before they can be saved.',
+      };
+    }
+    if (selectedView.title !== source) {
+      return {
+        status: 'blocked',
+        reason:
+          `The selected data view ("${selectedView.title}") does not match the query's ` +
+          `source ("${source}") — select the matching data view, or change the query's source.`,
+      };
+    }
+    if (loadingFields || fields.length === 0) {
+      return { status: 'blocked', reason: 'Resolving fields from the data view…' };
+    }
+
+    const byName = new Map(fields.map((f) => [f.name, f]));
+    const fieldMap: Record<string, string> = {};
+    for (const f of collectPplStringContextFields(parsed.rule)) {
+      const opt = byName.get(f);
+      if (!opt || !opt.esTypes.some((t) => ANALYZED_TEXT_TYPES.has(t))) continue;
+      const keyword = byName.get(`${f}.keyword`);
+      if (keyword && keyword.aggregatable) {
+        fieldMap[f] = `${f}.keyword`;
+        continue;
+      }
+      return {
+        status: 'blocked',
+        reason:
+          `Field "${f}" is analyzed text with no ".keyword" subfield, so it cannot be matched ` +
+          'or grouped exactly — the saved monitor would fail silently at runtime. Use a keyword ' +
+          'field, or add a keyword subfield to the mapping.',
+      };
+    }
+    return { status: 'ok', fieldMap };
+  }, [mode, pplText, fields, loadingFields, selectedView]);
+
+  /**
    * The structured rule the user is currently building, for the active mode. SINGLE source of the
    * rule object — the client-side preview/Sigma compile, the "Test" POST, and the "Save" POST all
-   * use this exact value, so what you preview, test, and save can never diverge.
+   * use this exact value, so what you preview, test, and save can never diverge. Each mode's
+   * branch reads ONLY its own slice of the form state, so switching type cards never leaks one
+   * type's state into another type's save payload.
    */
-  const currentRule = useMemo<RuleDefinition | ThresholdRuleDefinition>(() => {
+  const currentRule = useMemo<
+    RuleDefinition | ThresholdRuleDefinition | PplRuleDefinition | CustomQueryRuleDefinition
+  >(() => {
     const cleaned = cleanConditions(conditions);
     const index = selectedView?.title ?? '';
     const ruleName = name.trim() || 'Untitled detection';
@@ -220,6 +354,41 @@ export function DetectionBuilder({
         ...metadata,
       };
     }
+    if (mode === 'custom_query') {
+      return {
+        name: ruleName,
+        severity,
+        index,
+        language: queryLanguage,
+        queryText,
+        ...(runEvery ? { runEvery } : {}),
+        ...metadata,
+      };
+    }
+    if (mode === 'ppl') {
+      const parsed = parsePpl(pplText);
+      // W2 review (BLOCKING-1): a fresh field-caps resolution replaces the fieldMap ONLY when it
+      // SUCCEEDS; until then an edit keeps the SAVED rule's map, so a PUT can never silently
+      // downgrade a correct map to {} (Save is blocked anyway while the resolution is not 'ok').
+      const fieldMap =
+        pplFieldResolution.status === 'ok' ? pplFieldResolution.fieldMap : seed.fieldMap ?? {};
+      return {
+        name: ruleName,
+        severity,
+        // A PPL rule's index IS the query's `source =` list (assertValidPplRule enforces the
+        // equality) — the data view is used for fields/preview, not the rule target.
+        index: parsed.ok ? parsed.rule.indices.join(',') : '',
+        pplText,
+        // Re-stamped from the live parse (the D4 advanced.by idiom below): rule.groupBy MUST
+        // mirror the query's by-fields, so derive it from the source of truth instead of racing
+        // the editor's debounced mirror (which keeps `pplGroupBy` for hydration/fallback).
+        groupBy: parsed.ok ? parsed.rule.by.map((f) => f.name) : pplGroupBy,
+        window: { value: windowValue, unit: windowUnit },
+        ...(Object.keys(fieldMap).length ? { fieldMap } : {}),
+        ...(runEvery ? { runEvery } : {}),
+        ...metadata,
+      };
+    }
     return {
       name: ruleName,
       severity,
@@ -228,6 +397,9 @@ export function DetectionBuilder({
       groupBy,
       window: { value: windowValue, unit: windowUnit },
       threshold: { operator: thresholdOp, value: thresholdValue },
+      // D4: re-stamp advanced.by from the authoritative groupBy so it never goes stale when the
+      // group-bys change (the compiler ignores advanced.by anyway — groupBy is authoritative).
+      ...(advanced ? { advanced: { ...advanced, by: groupBy } } : {}),
       ...(runEvery ? { runEvery } : {}),
       ...metadata,
     };
@@ -250,6 +422,13 @@ export function DetectionBuilder({
     falsePositives,
     references,
     runEvery,
+    advanced,
+    pplText,
+    pplGroupBy,
+    pplFieldResolution,
+    seed,
+    queryText,
+    queryLanguage,
   ]);
 
   /**
@@ -265,6 +444,18 @@ export function DetectionBuilder({
     | { ok: false; error: string }
   >(() => {
     try {
+      // v1.2.3 D3: PPL rules have neither a toSigma nor a doc-kind compile below to gate Save,
+      // so gate explicitly: the client-only field-caps resolution verdict first (no data view /
+      // source mismatch / fields loading / unresolvable text field — the server re-checks all of
+      // it, but only the client can name it before a round-trip), then the FULL compile
+      // (parse → validate → lower → compileAggregationRule), so alias shape/duplicate/reserved
+      // errors surface pre-save exactly like every other type's compile gate (W2 review).
+      if (ruleType.id === 'ppl') {
+        if (pplFieldResolution.status === 'blocked') {
+          return { ok: false, error: pplFieldResolution.reason };
+        }
+        ruleType.compile(currentRule);
+      }
       return {
         ok: true,
         sigma: ruleType.toSigma ? ruleType.toSigma(currentRule) : '',
@@ -273,7 +464,7 @@ export function DetectionBuilder({
     } catch (e) {
       return { ok: false, error: (e as Error)?.message ?? 'The rule is incomplete.' };
     }
-  }, [ruleType, currentRule]);
+  }, [ruleType, currentRule, pplFieldResolution]);
 
   // Editing the rule (or switching mode) invalidates a prior "Saved ✓" — clear it so Save re-enables
   // for the now-changed rule. This is half the duplicate-save guard (the server enforces the rest).
@@ -292,11 +483,85 @@ export function DetectionBuilder({
     }
   }, [initialRule, views, dataViewId]);
 
+  // --- W2 review (BLOCKING-2): custom-query save gate ------------------------------------------
+  /** The (language, index, query) triple a `_validate` verdict must match to count as fresh. */
+  const queryValidationKey = JSON.stringify([queryLanguage, selectedView?.title ?? '', queryText]);
+  /** The verdict FOR THE CURRENT triple; anything validated earlier reads as 'idle' (stale). */
+  const freshQueryCheck =
+    queryCheck.key === queryValidationKey
+      ? queryCheck
+      : ({ status: 'idle' } as { status: 'idle'; reason?: string });
+
+  /** POST the current triple to `_validate`; records AND returns the verdict (onSave awaits it). */
+  const runQueryValidation = async (): Promise<{ valid: boolean; reason?: string }> => {
+    const index = selectedView?.title ?? '';
+    const key = JSON.stringify([queryLanguage, index, queryText]);
+    if (index === '' || queryText.trim() === '') {
+      // preview.ok already blocks this state; answered here only for defense in depth.
+      return { valid: false, reason: 'Select a data view and write a query first.' };
+    }
+    setQueryCheck({ status: 'checking', key });
+    try {
+      const resp = (await core.http.post('/api/tlsoc/detection/_validate', {
+        body: JSON.stringify({ index, query: queryText, language: queryLanguage }),
+      })) as { valid: boolean; reason?: string };
+      if (resp.valid) {
+        setQueryCheck({ status: 'valid', key });
+        return { valid: true };
+      }
+      const reason = resp.reason ?? 'The query is invalid.';
+      setQueryCheck({ status: 'invalid', key, reason });
+      return { valid: false, reason };
+    } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const err = e as any;
+      const reason = err?.body?.message ?? err?.message ?? 'Validation request failed';
+      setQueryCheck({ status: 'error', key, reason });
+      return { valid: false, reason };
+    }
+  };
+
+  /**
+   * The editor's blur/submit hook — skipped when the current triple already has/awaits a REAL
+   * verdict. A transient 'error' (network hiccup) is retryable on the next blur, matching the
+   * old editor's reset-on-error behavior — otherwise a hiccup would dead-end the save until the
+   * query text changed.
+   */
+  const onQueryValidateRequest = () => {
+    if (mode !== 'custom_query') return;
+    if (freshQueryCheck.status === 'checking' || freshQueryCheck.status === 'valid') return;
+    if (freshQueryCheck.status === 'invalid') return; // a real verdict — only a new query changes it
+    if (!selectedView || queryText.trim() === '') return;
+    void runQueryValidation();
+  };
+
+  /** Why Save is disabled for a custom-query rule right now, or null when it may proceed. */
+  const customQueryBlockReason =
+    mode !== 'custom_query'
+      ? null
+      : freshQueryCheck.status === 'checking'
+      ? 'Validating the query against your data…'
+      : freshQueryCheck.status === 'invalid' || freshQueryCheck.status === 'error'
+      ? freshQueryCheck.reason ?? 'The query did not validate.'
+      : null;
+  // ----------------------------------------------------------------------------------------------
+
   const onSave = async () => {
     setSaving(true);
     setSaveError(null);
     setSaveResult(null);
     try {
+      // W2 review (BLOCKING-2): never race the async validation. A custom-query save proceeds
+      // only on a verdict for the EXACT current triple — anything stale/absent is re-validated
+      // HERE and awaited, and a failure blocks the save with the validator's reason. (The save
+      // route re-validates server-side regardless; this keeps the failure interactive.)
+      if (mode === 'custom_query' && freshQueryCheck.status !== 'valid') {
+        const verdict = await runQueryValidation();
+        if (!verdict.valid) {
+          setSaveError(verdict.reason ?? 'The query did not validate.');
+          return;
+        }
+      }
       const body = JSON.stringify({ mode, rule: currentRule, enabled });
       const resp = isEdit
         ? await core.http.put(`/api/tlsoc/detection/monitors/${editSoId}`, { body })
@@ -337,6 +602,8 @@ export function DetectionBuilder({
         groupBy,
         window: { value: windowValue, unit: windowUnit },
         threshold: { operator: thresholdOp, value: thresholdValue },
+        // D4: same re-stamp as currentRule, so Test exercises the advanced compile path too.
+        ...(advanced ? { advanced: { ...advanced, by: groupBy } } : {}),
       };
       const body = JSON.stringify({
         mode: 'stateful',
@@ -355,6 +622,26 @@ export function DetectionBuilder({
   };
 
   const firedGroups: string[][] = (result?.firedGroups as string[][]) ?? [];
+
+  /**
+   * v1.2.3 D3: run the server-side PPL preview with the CURRENT window. The DataViewRef list
+   * carries only id/title, so the full data view is fetched on demand (Preview is an explicit
+   * user action) to resolve its time field for the injected window conjunct.
+   */
+  const onPplPreview = async (text: string): Promise<PplPreviewData> => {
+    let timeField = '@timestamp';
+    if (dataViewId) {
+      try {
+        const dv = await data.dataViews.get(dataViewId);
+        if (dv?.timeFieldName) timeField = dv.timeFieldName;
+      } catch {
+        // Fall back to @timestamp — the preview route names a missing time field clearly.
+      }
+    }
+    return (await core.http.post('/api/tlsoc/detection/_ppl_preview', {
+      body: JSON.stringify({ pplText: text, timeField, windowValue, windowUnit }),
+    })) as PplPreviewData;
+  };
 
   // Doc-level monitors are rejected by OpenSearch 3.7 for index names containing "." or "*".
   // Rather than block Save, a doc-kind rule on such an index runs against a dot-free ALIAS the
@@ -382,8 +669,9 @@ export function DetectionBuilder({
         </EuiTitle>
         <EuiText color="subdued">
           <p>
-            Build a detection rule — a single-event match or a “more than N within a time window”
-            threshold — then preview or test it before saving. No query language required.
+            Build a detection rule — a no-code single-event match or threshold, a custom
+            DQL/Lucene query, or an advanced PPL aggregation — then preview or test it before
+            saving.
           </p>
         </EuiText>
         <EuiSpacer size="l" />
@@ -481,8 +769,8 @@ export function DetectionBuilder({
               onConditionChange={updateCondition}
               onConditionAdd={addCondition}
               onConditionRemove={removeCondition}
-              groupBy={groupBy}
-              onGroupByChange={setGroupBy}
+              groupBy={mode === 'ppl' ? pplGroupBy : groupBy}
+              onGroupByChange={mode === 'ppl' ? setPplGroupBy : setGroupBy}
               windowValue={windowValue}
               onWindowValueChange={setWindowValue}
               windowUnit={windowUnit}
@@ -491,14 +779,34 @@ export function DetectionBuilder({
               onThresholdOpChange={setThresholdOp}
               thresholdValue={thresholdValue}
               onThresholdValueChange={setThresholdValue}
+              advanced={advanced}
+              onAdvancedChange={setAdvanced}
+              pplText={pplText}
+              onPplTextChange={setPplText}
+              onPreview={onPplPreview}
+              core={core}
+              data={data}
+              dataViewId={dataViewId || undefined}
+              indexPattern={selectedView?.title}
+              queryText={queryText}
+              queryLanguage={queryLanguage}
+              onQueryTextChange={setQueryText}
+              onQueryLanguageChange={setQueryLanguage}
+              queryCheck={freshQueryCheck}
+              onQueryValidate={onQueryValidateRequest}
             />
           </Suspense>
           <EuiSpacer size="m" />
 
+          {/* Every bucket-kind type has a rule window T that caps the cadence (R ≤ T) — keyed
+              off the registry's monitorKind, not a mode literal, so 'ppl' gets it too. */}
           <ScheduleSection
-            mode={mode}
             runEvery={runEvery}
-            window={mode === 'stateful' ? { value: windowValue, unit: windowUnit } : undefined}
+            window={
+              ruleType.monitorKind === 'bucket'
+                ? { value: windowValue, unit: windowUnit }
+                : undefined
+            }
             onChange={setRunEvery}
           />
           <EuiSpacer size="m" />
@@ -624,45 +932,70 @@ export function DetectionBuilder({
           </EuiPanel>
           <EuiSpacer size="m" />
 
-          <EuiPanel hasShadow={false} hasBorder>
-            <EuiTitle size="xs">
-              <h2>Sigma export</h2>
-            </EuiTitle>
-            <EuiSpacer size="s" />
-            <EuiText size="s" color="subdued">
-              <p>
-                A portable Sigma rule you can share or import into other tools.{' '}
-                {mode === 'stateful'
-                  ? 'Stateful rules export as a Sigma event_count correlation rule.'
-                  : 'Single-event rules export as a standard Sigma detection rule.'}{' '}
-                Sigma is an export artifact only — TLSOC runs OpenSearch Alerting monitors, not Sigma
-                (decision D-008).
-              </p>
-            </EuiText>
-            <EuiSpacer size="s" />
-            <EuiAccordion id="tlsoc-sigma-export" buttonContent="View Sigma export (portable YAML)">
-              <EuiSpacer size="s" />
-              {preview.ok ? (
-                <EuiCodeBlock language="yaml" fontSize="s" paddingSize="s" isCopyable>
-                  {preview.sigma}
-                </EuiCodeBlock>
-              ) : (
-                <EuiCallOut
-                  color="primary"
-                  iconType="iInCircle"
-                  title="Finish the rule to generate its Sigma export"
+          {/* Only Sigma-exportable types get the export panel — ppl/custom_query rules have no
+              toSigma (an empty code block would be worse than no panel). A stateful rule WITH
+              advanced metrics gets a one-line note instead (W2 review): its toSigma exports only
+              the SUPERSEDED simple threshold — Sigma correlation cannot express multi-metric
+              having conditions — and offering that export as if it were the rule would mislead. */}
+          {mode === 'stateful' && advanced ? (
+            <>
+              <EuiText size="s" color="subdued">
+                <p>
+                  Advanced metric rules cannot be expressed in Sigma — the Sigma export is
+                  unavailable for this rule.
+                </p>
+              </EuiText>
+              <EuiSpacer size="m" />
+            </>
+          ) : ruleType.toSigma ? (
+            <>
+              <EuiPanel hasShadow={false} hasBorder>
+                <EuiTitle size="xs">
+                  <h2>Sigma export</h2>
+                </EuiTitle>
+                <EuiSpacer size="s" />
+                <EuiText size="s" color="subdued">
+                  <p>
+                    A portable Sigma rule you can share or import into other tools.{' '}
+                    {mode === 'stateful'
+                      ? 'Stateful rules export as a Sigma event_count correlation rule.'
+                      : 'Single-event rules export as a standard Sigma detection rule.'}{' '}
+                    Sigma is an export artifact only — TLSOC runs OpenSearch Alerting monitors, not
+                    Sigma (decision D-008).
+                  </p>
+                </EuiText>
+                <EuiSpacer size="s" />
+                <EuiAccordion
+                  id="tlsoc-sigma-export"
+                  buttonContent="View Sigma export (portable YAML)"
                 >
-                  <p>{preview.error}</p>
-                </EuiCallOut>
-              )}
-            </EuiAccordion>
-          </EuiPanel>
-          <EuiSpacer size="m" />
+                  <EuiSpacer size="s" />
+                  {preview.ok ? (
+                    <EuiCodeBlock language="yaml" fontSize="s" paddingSize="s" isCopyable>
+                      {preview.sigma}
+                    </EuiCodeBlock>
+                  ) : (
+                    <EuiCallOut
+                      color="primary"
+                      iconType="iInCircle"
+                      title="Finish the rule to generate its Sigma export"
+                    >
+                      <p>{preview.error}</p>
+                    </EuiCallOut>
+                  )}
+                </EuiAccordion>
+              </EuiPanel>
+              <EuiSpacer size="m" />
+            </>
+          ) : null}
 
-          {/* Keyed off the registry's previewStrategy: bucket-kind types get the proven live
-              dry-run; doc-kind types cannot be dry-run unsaved (alerting #1295) and show the
-              compiled monitor instead. Behavior-identical to the old mode==='stateful' fork. */}
+          {/* Keyed off the registry's previewStrategy: bucket-dryrun types get the proven live
+              dry-run; ppl-preview types render NO shared test panel (the PPL editor embeds its
+              own Preview); search-sample doc-kind types get a plain-search preview — a live one
+              for custom_query, the compiled-monitor fallback for stateless (doc-level monitors
+              cannot be dry-run unsaved — upstream alerting #1295/NPE, research_r3 §4). */}
           {uiType.previewStrategy === 'bucket-dryrun' ? (
+          <>
           <EuiPanel hasShadow={false} hasBorder>
             <EuiTitle size="xs">
               <h2>Test this rule</h2>
@@ -734,7 +1067,22 @@ export function DetectionBuilder({
               </>
             ) : null}
           </EuiPanel>
+          <EuiSpacer size="m" />
+          </>
+          ) : uiType.previewStrategy === 'ppl-preview' ? null : mode === 'custom_query' ? (
+          <>
+          {/* D2: a live plain-search preview — the translated Lucene the saved monitor will run. */}
+          <CustomQueryPreview
+            core={core}
+            data={data}
+            dataViewId={dataViewId || undefined}
+            language={queryLanguage}
+            queryText={queryText}
+          />
+          <EuiSpacer size="m" />
+          </>
           ) : (
+          <>
           <EuiPanel hasShadow={false} hasBorder>
             <EuiTitle size="xs">
               <h2>Test this rule</h2>
@@ -746,12 +1094,11 @@ export function DetectionBuilder({
               title="Live single-event preview isn’t available yet"
             >
               <p>
-                Single-event (doc-level) rules can’t be dry-run against unsaved data because of an
-                upstream OpenSearch Alerting limitation (issue #1295: an unsaved doc-level monitor
-                _execute returns “routing is required”). Below is the exact doc-level monitor this
-                rule compiles to. Once it is saved as a monitor (a later task) it will evaluate each
-                incoming document. Threshold (stateful) rules can be tested live now — switch the
-                detection type above.
+                Single-event (doc-level) rules can’t be dry-run before saving — on OpenSearch 3.7
+                an unsaved doc-level monitor _execute fails outright (upstream alerting issue
+                #1295), so TLSOC never fakes a test result here. Below is the exact doc-level
+                monitor this rule compiles to; once saved, it evaluates each incoming document on
+                its schedule. Threshold rules can be tested live — switch the detection type above.
               </p>
             </EuiCallOut>
             <EuiSpacer size="m" />
@@ -773,8 +1120,9 @@ export function DetectionBuilder({
               </EuiCallOut>
             )}
           </EuiPanel>
-          )}
           <EuiSpacer size="m" />
+          </>
+          )}
 
           <EuiPanel hasShadow={false} hasBorder>
             <EuiTitle size="xs">
@@ -800,15 +1148,26 @@ export function DetectionBuilder({
               iconType="save"
               onClick={onSave}
               isLoading={saving}
-              isDisabled={!preview.ok || saving || !!saveResult}
+              isDisabled={!preview.ok || !!customQueryBlockReason || saving || !!saveResult}
             >
               {saveResult ? 'Saved ✓' : isEdit ? 'Update detection' : 'Save detection'}
             </EuiButton>
             {!preview.ok ? (
               <>
                 <EuiSpacer size="s" />
+                {/* The reason is named here too — for types without a Sigma/compiled-monitor
+                    panel (ppl), this is the ONLY place the blocking message can surface. */}
                 <EuiText size="s" color="subdued">
-                  <p>Finish the rule to enable saving.</p>
+                  <p>Finish the rule to enable saving — {preview.error}</p>
+                </EuiText>
+              </>
+            ) : customQueryBlockReason ? (
+              <>
+                <EuiSpacer size="s" />
+                {/* W2 review (BLOCKING-2): a failed/pending cluster validation blocks Save with
+                    its reason (the editor shows the same verdict next to the query bar). */}
+                <EuiText size="s" color="subdued">
+                  <p>Save is blocked — {customQueryBlockReason}</p>
                 </EuiText>
               </>
             ) : null}
@@ -818,7 +1177,7 @@ export function DetectionBuilder({
                 <EuiCallOut
                   color="primary"
                   iconType="iInCircle"
-                  title="Single-event rules run against a dot-free alias"
+                  title="This rule runs against a dot-free alias"
                 >
                   <p>
                     OpenSearch doc-level monitors can’t target index names with “.” or “*”, so this
