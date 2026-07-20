@@ -109,12 +109,39 @@ describe('#dataSourceManagement', () => {
     }).toThrow('cannot call `registerAuthenticationMethod` after data source management startup.');
   });
 
-  it('should register application in the management section', () => {
+  // TLSOC PROB-26: with multi-data-source DISABLED the plugin must register NO "Data sources"
+  // surface at all (management app, nav link, index-pattern column) — a single-cluster SOC would
+  // otherwise show an inherently empty page and an always-empty column.
+  it('does NOT register the management application when the feature flag is disabled', () => {
     const plugin = new DataSourceManagementPlugin(mockInitializerContext);
     const setupDeps: DataSourceManagementSetupDependencies = {
       management: coreSetup.management,
       indexPatternManagement: coreSetup.indexPatternManagement,
       dataSource: undefined, // Feature flag disabled
+    };
+    // The registration mocks are shared across this file's tests — drop calls leaked from the
+    // enabled-flag cases above so the zero-call assertions below are about THIS setup() only.
+    (setupDeps.management.sections.section.opensearchDashboards.registerApp as jest.Mock).mockClear();
+    (setupDeps.indexPatternManagement.columns.register as jest.Mock).mockClear();
+
+    plugin.setup(coreSetup, setupDeps);
+    expect(
+      setupDeps.management.sections.section.opensearchDashboards.registerApp
+    ).not.toHaveBeenCalled();
+    expect(setupDeps.indexPatternManagement.columns.register).not.toHaveBeenCalled();
+  });
+
+  it('registers the management application when the feature flag is enabled', () => {
+    const plugin = new DataSourceManagementPlugin(mockInitializerContext);
+    const setupDeps: DataSourceManagementSetupDependencies = {
+      management: coreSetup.management,
+      indexPatternManagement: coreSetup.indexPatternManagement,
+      dataSource: {
+        awsSigV4AuthEnabled: true,
+        noAuthenticationTypeEnabled: true,
+        usernamePasswordAuthEnabled: true,
+        hideLocalCluster: false,
+      } as any,
     };
 
     plugin.setup(coreSetup, setupDeps);
@@ -128,6 +155,7 @@ describe('#dataSourceManagement', () => {
         mount: expect.any(Function),
       })
     );
+    expect(setupDeps.indexPatternManagement.columns.register).toHaveBeenCalled();
   });
 
   it('should set and get renderAccelerationDetailsFlyout correctly', () => {

@@ -12,10 +12,11 @@ export const DEFAULT_DATA_SOURCE_TYPE = 'DEFAULT_INDEX_PATTERNS';
 export const DEFAULT_DATA_SOURCE_NAME = i18n.translate('data.datasource.type.openSearchDefault', {
   defaultMessage: 'OpenSearch Default',
 });
+// TLSOC PROB-26: display label only — the identifier DEFAULT_INDEX_PATTERNS above is UNCHANGED.
 export const DEFAULT_DATA_SOURCE_DISPLAY_NAME = i18n.translate(
   'data.datasource.type.openSearchDefaultDisplayName',
   {
-    defaultMessage: 'Index patterns',
+    defaultMessage: 'Data views',
   }
 );
 

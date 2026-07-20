@@ -146,66 +146,78 @@ export class DataSourceManagementPlugin
       .getStartServices()
       .then(([coreStart]) => coreStart.savedObjects);
 
-    const column = new DataSourceColumn(savedObjectPromise, uiSettings.get('home:useNewHomePage'));
-    indexPatternManagement.columns.register(column);
-
     this.featureFlagStatus = !!dataSource;
 
-    this.managementApp = opensearchDashboardsSection.registerApp({
-      id: DSM_APP_ID,
-      title: PLUGIN_NAME,
-      order: 1,
-      // @ts-expect-error TS2322 TODO(ts-error): fixme
-      mount: async (params: AppMountParameters) => {
-        const { mountManagementSection } = await import('./management_app');
+    // TLSOC PROB-26 (Tier-1, 2026-07-20): when multi-data-source is DISABLED (the single-cluster
+    // SOC default), every "Data sources" surface is dead weight — an inherently empty management
+    // page, an empty nav item, and an always-empty "Data Source Connection" column on the data
+    // views table. Upstream registered them unconditionally; we register them ONLY when the
+    // `data_source` plugin is enabled. No ids/types are renamed — enabling MDS restores all of it.
+    if (this.featureFlagStatus) {
+      const column = new DataSourceColumn(
+        savedObjectPromise,
+        uiSettings.get('home:useNewHomePage')
+      );
+      indexPatternManagement.columns.register(column);
 
-        return mountManagementSection(
-          // @ts-expect-error TS2345 TODO(ts-error): fixme
-          core.getStartServices,
-          params,
-          this.authMethodsRegistry,
-          this.featureFlagStatus
-        );
-      },
-    });
-
-    if (core.chrome.navGroup.getNavGroupEnabled()) {
-      core.application.register({
+      this.managementApp = opensearchDashboardsSection.registerApp({
         id: DSM_APP_ID,
         title: PLUGIN_NAME,
-        order: 100,
-        description: i18n.translate('dataSourcesManagement.description', {
-          defaultMessage: 'Create and manage data source connections.',
-        }),
+        order: 1,
+        // @ts-expect-error TS2322 TODO(ts-error): fixme
         mount: async (params: AppMountParameters) => {
           const { mountManagementSection } = await import('./management_app');
-          const [coreStart] = await core.getStartServices();
 
           return mountManagementSection(
             // @ts-expect-error TS2345 TODO(ts-error): fixme
             core.getStartServices,
-            {
-              ...params,
-              basePath: core.http.basePath.get(),
-              setBreadcrumbs: (breadCrumbs) =>
-                coreStart.chrome.setBreadcrumbs(getScopedBreadcrumbs(breadCrumbs, params.history)),
-              wrapInPage: true,
-            },
+            params,
             this.authMethodsRegistry,
             this.featureFlagStatus
           );
         },
       });
-    }
 
-    core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS.dataAdministration, [
-      {
-        id: DSM_APP_ID,
-        category: DEFAULT_APP_CATEGORIES.manageData,
-        order: 100,
-        euiIconType: 'indexManagementApp',
-      },
-    ]);
+      if (core.chrome.navGroup.getNavGroupEnabled()) {
+        core.application.register({
+          id: DSM_APP_ID,
+          title: PLUGIN_NAME,
+          order: 100,
+          description: i18n.translate('dataSourcesManagement.description', {
+            defaultMessage: 'Create and manage data source connections.',
+          }),
+          mount: async (params: AppMountParameters) => {
+            const { mountManagementSection } = await import('./management_app');
+            const [coreStart] = await core.getStartServices();
+
+            return mountManagementSection(
+              // @ts-expect-error TS2345 TODO(ts-error): fixme
+              core.getStartServices,
+              {
+                ...params,
+                basePath: core.http.basePath.get(),
+                setBreadcrumbs: (breadCrumbs) =>
+                  coreStart.chrome.setBreadcrumbs(
+                    getScopedBreadcrumbs(breadCrumbs, params.history)
+                  ),
+                wrapInPage: true,
+              },
+              this.authMethodsRegistry,
+              this.featureFlagStatus
+            );
+          },
+        });
+      }
+
+      core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS.dataAdministration, [
+        {
+          id: DSM_APP_ID,
+          category: DEFAULT_APP_CATEGORIES.manageData,
+          order: 100,
+          euiIconType: 'indexManagementApp',
+        },
+      ]);
+    }
 
     // when the feature flag is disabled, we don't need to register any of the mds components
     if (!this.featureFlagStatus) {

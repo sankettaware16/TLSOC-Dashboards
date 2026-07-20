@@ -82,12 +82,13 @@ const search = {
   },
 };
 
+// TLSOC PROB-26: display labels only — see plugin.ts sectionsHeader.
 const ariaRegion = i18n.translate('indexPatternManagement.editIndexPatternLiveRegionAriaLabel', {
-  defaultMessage: 'Index patterns',
+  defaultMessage: 'Data views',
 });
 
 const title = i18n.translate('indexPatternManagement.indexPatternTable.title', {
-  defaultMessage: 'Index patterns',
+  defaultMessage: 'Data views',
 });
 
 interface Props extends RouteComponentProps {

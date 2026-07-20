@@ -161,8 +161,9 @@ export const DatasetSelector = ({
       selectedDataset?.id
     );
     const indexPatternOptions = buildDatasetOptions(
+      // TLSOC PROB-26: display label only — the Discover/data-explorer source dropdown group.
       i18n.translate('data.dataSelector.indexPatternsGroupLabel', {
-        defaultMessage: 'Index patterns',
+        defaultMessage: 'Data views',
       }),
       indexPatterns.filter(
         (dataset) => !recentDatasets.some((recentDataset) => recentDataset.id === dataset.id)

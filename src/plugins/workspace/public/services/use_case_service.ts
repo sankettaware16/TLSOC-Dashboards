@@ -95,15 +95,14 @@ export class UseCaseService {
                 ]
               : []),
             // TLSOC (5b.2c, human-decided 2026-07-15): the full upstream list STAYS — including
-            // Data sources, Datasets, and Sample data. The human explicitly wants sample-data
-            // loading (to exercise visualizations) and self-serve dataset/data-view creation
-            // inside workspaces. Do NOT trim these again.
-            {
-              id: 'dataSources',
-              category: DEFAULT_APP_CATEGORIES.manageWorkspace,
-              order: 300,
-              euiIconType: 'database',
-            },
+            // Datasets and Sample data. The human explicitly wants sample-data loading (to
+            // exercise visualizations) and self-serve dataset/data-view creation inside
+            // workspaces. Do NOT trim these again.
+            // TLSOC PROB-26 (Tier-1, human-approved 2026-07-20 — SUPERSEDES the 5b.2c note for
+            // this ONE item): the 'dataSources' entry is REMOVED. Multi-data-source is disabled
+            // on a single-cluster SOC, so the page it points at is inherently empty (the
+            // data_source_management plugin no longer registers the app at all when MDS is off —
+            // the link would 404). Restore this entry only if MDS is ever enabled.
             {
               id: 'indexPatterns',
               category: DEFAULT_APP_CATEGORIES.manageWorkspace,

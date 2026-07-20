@@ -111,12 +111,6 @@ describe('UseCaseService', () => {
             euiIconType: 'users',
           },
           {
-            id: 'dataSources',
-            category: DEFAULT_APP_CATEGORIES.manageWorkspace,
-            order: 300,
-            euiIconType: 'database',
-          },
-          {
             id: 'indexPatterns',
             category: DEFAULT_APP_CATEGORIES.manageWorkspace,
             order: 400,
@@ -183,10 +177,6 @@ describe('UseCaseService', () => {
             expect.objectContaining({
               id: 'workspace_collaborators',
               euiIconType: 'users',
-            }),
-            expect.objectContaining({
-              id: 'dataSources',
-              euiIconType: 'database',
             }),
             expect.objectContaining({
               id: 'indexPatterns',

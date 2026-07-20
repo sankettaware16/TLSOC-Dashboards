@@ -68,8 +68,11 @@ export type IndexPatternManagementSetup = IndexPatternManagementServiceSetup;
 
 export type IndexPatternManagementStart = IndexPatternManagementServiceStart;
 
+// TLSOC PROB-26 (Tier-1, 2026-07-20): display label ONLY — "Data views" (the Kibana/ELK term the
+// human's analysts know). The app id, routes, and the `index-pattern` saved-object type are
+// UNCHANGED (renaming them would break navigation and every existing data view).
 const sectionsHeader = i18n.translate('indexPatternManagement.indexPattern.sectionsHeader', {
-  defaultMessage: 'Index patterns',
+  defaultMessage: 'Data views',
 });
 
 /**
