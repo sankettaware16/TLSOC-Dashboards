@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { DetectionMode } from '../detection/save';
+import type { DetectionMode } from '../detection/registry';
 import type { Severity, ThreatEntry } from '../detection/types';
 
 export type AlertState = 'ACTIVE' | 'ACKNOWLEDGED' | 'COMPLETED' | 'ERROR' | 'DELETED';

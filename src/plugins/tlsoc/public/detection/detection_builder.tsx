@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import {
   EuiAccordion,
   EuiBadge,
   EuiButton,
   EuiButtonEmpty,
-  EuiButtonGroup,
   EuiCallOut,
+  EuiCard,
   EuiCodeBlock,
   EuiComboBox,
   EuiFieldNumber,
@@ -20,6 +20,8 @@ import {
   EuiForm,
   EuiFormRow,
   EuiHorizontalRule,
+  EuiIcon,
+  EuiLoadingSpinner,
   EuiMarkdownEditor,
   EuiPage,
   EuiPageBody,
@@ -36,29 +38,21 @@ import {
   Condition,
   ConditionGroup,
   CountThreshold,
+  DetectionMode,
   RuleDefinition,
   RuleMetadataFields,
   Severity,
   ThreatEntry,
   ThresholdRuleDefinition,
   TimeWindow,
-  compileToDocLevelMonitor,
-  compileToSigma,
-  compileToSigmaCorrelation,
   deriveAliasName,
+  getType,
 } from '../../common/detection';
-import { ConditionRow } from './condition_row';
 import { MitreTtpPicker } from './mitre_ttp_picker';
 import { ScheduleSection } from './schedule_section';
+import { getUiType, listUiTypes } from './type_registry';
 import { useDataViewFields, useDataViews } from './use_data_view_fields';
-import {
-  DetectionMode,
-  MODE_OPTIONS,
-  OPERATOR_OPTIONS,
-  SEVERITY_OPTIONS,
-  THRESHOLD_OP_OPTIONS,
-  WINDOW_UNIT_OPTIONS,
-} from './ui_options';
+import { OPERATOR_OPTIONS, SEVERITY_OPTIONS } from './ui_options';
 
 interface Props {
   core: CoreStart;
@@ -187,7 +181,10 @@ export function DetectionBuilder({
   const [saveResult, setSaveResult] = useState<{ id: string; name: string } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const aggregatableFields = useMemo(() => fields.filter((f) => f.aggregatable), [fields]);
+  // The active type's two registry halves: execution contract (common) + editor/preview UI (public).
+  const ruleType = getType(mode);
+  const uiType = getUiType(mode);
+  const TypeEditor = uiType.editor;
 
   // Switching modes clears any stale stateful test result so it can't bleed into the stateless view.
   const onModeChange = (id: string) => {
@@ -256,30 +253,27 @@ export function DetectionBuilder({
   ]);
 
   /**
-   * Compile the in-progress rule CLIENT-SIDE for the preview/export panels (pure TS, decision D-008).
-   * The compilers throw on an incomplete rule (empty field/value, no conditions) — we catch that and
-   * surface the clear, contained message instead of crashing the form or spewing a stack trace. So a
-   * half-built rule simply shows "finish the rule…" until it is valid.
+   * Compile the in-progress rule CLIENT-SIDE for the preview/export panels (pure TS, decision D-008),
+   * dispatched through the type registry. The compilers throw on an incomplete rule (empty
+   * field/value, no conditions) — we catch that and surface the clear, contained message instead of
+   * crashing the form or spewing a stack trace. So a half-built rule simply shows "finish the
+   * rule…" until it is valid. The compiled monitor is shown only for doc-kind types (bucket-kind
+   * types get the live dry-run test panel instead).
    */
   const preview = useMemo<
     | { ok: true; sigma: string; monitor: Record<string, unknown> | null }
     | { ok: false; error: string }
   >(() => {
     try {
-      if (mode === 'stateless') {
-        const rule = currentRule as RuleDefinition;
-        return {
-          ok: true,
-          sigma: compileToSigma(rule),
-          monitor: (compileToDocLevelMonitor(rule) as unknown) as Record<string, unknown>,
-        };
-      }
-      const rule = currentRule as ThresholdRuleDefinition;
-      return { ok: true, sigma: compileToSigmaCorrelation(rule), monitor: null };
+      return {
+        ok: true,
+        sigma: ruleType.toSigma ? ruleType.toSigma(currentRule) : '',
+        monitor: ruleType.monitorKind === 'doc' ? ruleType.compile(currentRule) : null,
+      };
     } catch (e) {
       return { ok: false, error: (e as Error)?.message ?? 'The rule is incomplete.' };
     }
-  }, [mode, currentRule]);
+  }, [ruleType, currentRule]);
 
   // Editing the rule (or switching mode) invalidates a prior "Saved ✓" — clear it so Save re-enables
   // for the now-changed rule. This is half the duplicate-save guard (the server enforces the rest).
@@ -362,11 +356,13 @@ export function DetectionBuilder({
 
   const firedGroups: string[][] = (result?.firedGroups as string[][]) ?? [];
 
-  // Stateless (doc-level) monitors are rejected by OpenSearch 3.7 for index names containing "." or
-  // "*". Rather than block Save, a stateless rule on such an index runs against a dot-free ALIAS the
-  // server links on save (Task 3.5b). When that applies, surface the alias name + the Logstash note.
+  // Doc-level monitors are rejected by OpenSearch 3.7 for index names containing "." or "*".
+  // Rather than block Save, a doc-kind rule on such an index runs against a dot-free ALIAS the
+  // server links on save (Task 3.5b). When that applies, surface the alias name + the Logstash
+  // note. Keyed off the registry's monitorKind — every doc-kind type needs this, not just
+  // 'stateless' (same generalization as the server's prepareMonitor).
   const statelessAlias =
-    mode === 'stateless' && /[.*]/.test(currentRule.index)
+    ruleType.monitorKind === 'doc' && /[.*]/.test(currentRule.index)
       ? deriveAliasName(currentRule.index)
       : null;
 
@@ -422,21 +418,25 @@ export function DetectionBuilder({
               <h2>Detection type</h2>
             </EuiTitle>
             <EuiSpacer size="s" />
-            <EuiButtonGroup
-              type="single"
-              legend="Detection type"
-              idSelected={mode}
-              options={MODE_OPTIONS}
-              onChange={onModeChange}
-            />
-            <EuiSpacer size="s" />
-            <EuiText size="s" color="subdued">
-              <p>
-                {mode === 'stateful'
-                  ? 'Threshold: fire when more than N matching events occur within a time window, grouped by a field (e.g. a request flood from one source IP). Tested live against your data.'
-                  : 'Single-event: fire on any single document that matches the conditions (a Sigma-style rule). Exports to Sigma and compiles to a doc-level monitor; a live single-event preview isn’t available yet — see the note below.'}
-              </p>
-            </EuiText>
+            {/* The Elastic-shaped type-chooser card grid, sourced from the UI registry — a new
+                type's card appears by registering it, with no edit here (v1.2.3 D1). */}
+            <EuiFlexGroup gutterSize="m" wrap>
+              {listUiTypes().map((t) => (
+                <EuiFlexItem key={t.id} grow={false} style={{ width: 320 }}>
+                  <EuiCard
+                    titleSize="xs"
+                    textAlign="left"
+                    icon={<EuiIcon type={t.card.icon} size="xl" />}
+                    title={t.card.label}
+                    description={t.card.description}
+                    selectable={{
+                      onClick: () => onModeChange(t.id),
+                      isSelected: mode === t.id,
+                    }}
+                  />
+                </EuiFlexItem>
+              ))}
+            </EuiFlexGroup>
           </EuiPanel>
           <EuiSpacer size="m" />
 
@@ -461,114 +461,39 @@ export function DetectionBuilder({
           </EuiPanel>
           <EuiSpacer size="m" />
 
-          <EuiPanel hasShadow={false} hasBorder>
-            <EuiTitle size="xs">
-              <h2>Match — which events count</h2>
-            </EuiTitle>
-            <EuiSpacer size="s" />
-            {conditions.length > 1 ? (
-              <>
-                <EuiButtonGroup
-                  type="single"
-                  legend="Combine conditions with AND or OR"
-                  idSelected={logic}
-                  options={[
-                    { id: 'AND', label: 'Match ALL (AND)' },
-                    { id: 'OR', label: 'Match ANY (OR)' },
-                  ]}
-                  onChange={(id) => setLogic(id as ConditionGroup['logic'])}
-                />
-                <EuiSpacer size="s" />
-              </>
-            ) : null}
-            {fieldsError ? (
-              <>
-                <EuiCallOut color="danger" title={fieldsError} iconType="alert" />
-                <EuiSpacer size="s" />
-              </>
-            ) : null}
-            {conditions.map((condition, index) => (
-              <div key={index}>
-                <ConditionRow
-                  condition={condition}
-                  fields={fields}
-                  showRemove={conditions.length > 1}
-                  onChange={(next) => updateCondition(index, next)}
-                  onRemove={() => removeCondition(index)}
-                />
-                <EuiSpacer size="s" />
-              </div>
-            ))}
-            <EuiButtonEmpty
-              iconType="plusInCircle"
-              onClick={addCondition}
-              isDisabled={!selectedView}
-            >
-              Add condition
-            </EuiButtonEmpty>
-          </EuiPanel>
-          <EuiSpacer size="m" />
-
-          {mode === 'stateful' ? (
-            <>
+          {/* The per-type editor slot, resolved from the UI registry (lazily loaded). All form
+              state stays in this builder, so switching types never loses in-progress conditions. */}
+          <Suspense
+            fallback={
               <EuiPanel hasShadow={false} hasBorder>
-                <EuiTitle size="xs">
-                  <h2>Threshold — when to alert</h2>
-                </EuiTitle>
-            <EuiSpacer size="s" />
-            <EuiFormRow
-              label="Group by"
-              helpText="Only aggregatable fields are listed (e.g. source.ip). Text fields can't be grouped."
-            >
-              <EuiComboBox
-                placeholder="e.g. source.ip"
-                isLoading={loadingFields}
-                options={aggregatableFields.map((f) => ({ label: f.name }))}
-                selectedOptions={groupBy.map((g) => ({ label: g }))}
-                onChange={(opts) => setGroupBy(opts.map((o) => o.label))}
-              />
-            </EuiFormRow>
-            <EuiSpacer size="s" />
-            <EuiFlexGroup>
-              <EuiFlexItem>
-                <EuiFormRow label="Count">
-                  <EuiSelect
-                    options={THRESHOLD_OP_OPTIONS}
-                    value={thresholdOp}
-                    onChange={(e) => setThresholdOp(e.target.value as CountThreshold['operator'])}
-                  />
-                </EuiFormRow>
-              </EuiFlexItem>
-              <EuiFlexItem>
-                <EuiFormRow label="Events">
-                  <EuiFieldNumber
-                    value={thresholdValue}
-                    onChange={(e) => setThresholdValue(Number(e.target.value))}
-                  />
-                </EuiFormRow>
-              </EuiFlexItem>
-              <EuiFlexItem>
-                <EuiFormRow label="Within">
-                  <EuiFieldNumber
-                    value={windowValue}
-                    onChange={(e) => setWindowValue(Number(e.target.value))}
-                  />
-                </EuiFormRow>
-              </EuiFlexItem>
-              <EuiFlexItem>
-                <EuiFormRow label="Unit">
-                  <EuiSelect
-                    options={WINDOW_UNIT_OPTIONS}
-                    value={windowUnit}
-                    onChange={(e) => setWindowUnit(e.target.value as TimeWindow['unit'])}
-                  />
-                </EuiFormRow>
-              </EuiFlexItem>
-            </EuiFlexGroup>
+                <EuiLoadingSpinner size="m" />
               </EuiPanel>
-              <EuiSpacer size="m" />
-            </>
-          ) : null}
+            }
+          >
+            <TypeEditor
+              fields={fields}
+              loadingFields={loadingFields}
+              fieldsError={fieldsError}
+              hasDataView={!!selectedView}
+              logic={logic}
+              conditions={conditions}
+              onLogicChange={setLogic}
+              onConditionChange={updateCondition}
+              onConditionAdd={addCondition}
+              onConditionRemove={removeCondition}
+              groupBy={groupBy}
+              onGroupByChange={setGroupBy}
+              windowValue={windowValue}
+              onWindowValueChange={setWindowValue}
+              windowUnit={windowUnit}
+              onWindowUnitChange={setWindowUnit}
+              thresholdOp={thresholdOp}
+              onThresholdOpChange={setThresholdOp}
+              thresholdValue={thresholdValue}
+              onThresholdValueChange={setThresholdValue}
+            />
+          </Suspense>
+          <EuiSpacer size="m" />
 
           <ScheduleSection
             mode={mode}
@@ -734,7 +659,10 @@ export function DetectionBuilder({
           </EuiPanel>
           <EuiSpacer size="m" />
 
-          {mode === 'stateful' ? (
+          {/* Keyed off the registry's previewStrategy: bucket-kind types get the proven live
+              dry-run; doc-kind types cannot be dry-run unsaved (alerting #1295) and show the
+              compiled monitor instead. Behavior-identical to the old mode==='stateful' fork. */}
+          {uiType.previewStrategy === 'bucket-dryrun' ? (
           <EuiPanel hasShadow={false} hasBorder>
             <EuiTitle size="xs">
               <h2>Test this rule</h2>

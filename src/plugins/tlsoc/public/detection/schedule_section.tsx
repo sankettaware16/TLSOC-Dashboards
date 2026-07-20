@@ -14,8 +14,7 @@ import {
   EuiSpacer,
   EuiTitle,
 } from '@elastic/eui';
-import { DetectionMode } from './ui_options';
-import { TimeWindow } from '../../common/detection';
+import { DetectionMode, TimeWindow } from '../../common/detection';
 
 interface Props {
   mode: DetectionMode;

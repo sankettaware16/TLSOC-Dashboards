@@ -5,12 +5,7 @@
 
 import { schema } from '@osd/config-schema';
 import { IRouter, Logger } from '../../../../core/server';
-import {
-  RuleDefinition,
-  ThresholdRuleDefinition,
-  compileToBucketLevelMonitor,
-  compileToDocLevelMonitor,
-} from '../../common/detection';
+import { getType, isValidMode, unknownTypeMessage } from '../../common/detection';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -52,7 +47,9 @@ export function registerExecuteDetectionRoute(router: IRouter, logger: Logger) {
       path: '/api/tlsoc/detection/_execute',
       validate: {
         body: schema.object({
-          mode: schema.oneOf([schema.literal('stateful'), schema.literal('stateless')]),
+          // The registry check below replaces the old schema.oneOf mode literals, so a new registry
+          // type needs no edit here; an unknown id 400s BY NAME instead of a generic schema error.
+          mode: schema.string(),
           rule: schema.object({}, { unknowns: 'allow' }),
           timeRange: schema.maybe(
             schema.object({ from: schema.string(), to: schema.string() })
@@ -62,24 +59,28 @@ export function registerExecuteDetectionRoute(router: IRouter, logger: Logger) {
     },
     async (context, request, response) => {
       const { mode, rule, timeRange } = request.body as {
-        mode: 'stateful' | 'stateless';
+        mode: string;
         rule: Record<string, unknown>;
         timeRange?: { from: string; to: string };
       };
 
-      // 1) Compile the rule with the shared compiler (the same unit-tested code in common/detection).
+      if (!isValidMode(mode)) {
+        return response.badRequest({ body: { message: unknownTypeMessage(mode) } });
+      }
+      const ruleType = getType(mode);
+
+      // 1) Compile the rule via the type registry (the same unit-tested code in common/detection).
       let monitor: Record<string, any>;
       try {
-        monitor =
-          mode === 'stateful'
-            ? (compileToBucketLevelMonitor((rule as unknown) as ThresholdRuleDefinition) as any)
-            : (compileToDocLevelMonitor((rule as unknown) as RuleDefinition) as any);
+        monitor = ruleType.compile(rule) as any;
       } catch (err) {
         return response.badRequest({ body: { message: `Rule did not compile: ${err.message}` } });
       }
 
-      // 2) Optional backtest: evaluate the compiled stateful monitor over an absolute window.
-      if (timeRange && mode === 'stateful') {
+      // 2) Optional backtest: evaluate the compiled monitor over an absolute window. Keyed off the
+      // registry's monitorKind — only bucket-level monitors carry the @timestamp range search input
+      // this rewrites (doc-level monitors have no window at all).
+      if (timeRange && ruleType.monitorKind === 'bucket') {
         const filters = monitor?.inputs?.[0]?.search?.query?.query?.bool?.filter;
         const rangeClause = Array.isArray(filters)
           ? filters.find((f: any) => f?.range?.['@timestamp'])

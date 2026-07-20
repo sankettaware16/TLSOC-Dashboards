@@ -5,18 +5,9 @@
 
 import { CountThreshold, DetectionOperator, Severity, TimeWindow } from '../../common/detection';
 
-/** The two detection modes the builder can author. */
-export type DetectionMode = 'stateful' | 'stateless';
-
-/**
- * Mode toggle options (EuiButtonGroup). Stateful is the default — it's the proven path that fires
- * live on real data; stateless (single-event) is the Sigma-style mode whose live preview is gated
- * upstream (alerting #1295), so it shows the compiled monitor + Sigma export instead.
- */
-export const MODE_OPTIONS: Array<{ id: DetectionMode; label: string }> = [
-  { id: 'stateful', label: 'Threshold (stateful)' },
-  { id: 'stateless', label: 'Single-event (stateless)' },
-];
+// DetectionMode's single source of truth is the rule-type registry (common/detection/registry.ts);
+// the type chooser is the registry-driven card grid (type_registry.tsx), which replaced the old
+// MODE_OPTIONS button group here (v1.2.3 D1).
 
 /** Per-operator UI metadata: the label, how many values it takes, and whether the value is numeric. */
 export interface OperatorOption {

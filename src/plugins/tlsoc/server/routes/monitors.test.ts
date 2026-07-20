@@ -267,4 +267,50 @@ describe('registerMonitorRoutes', () => {
       expect(logger.warn).toHaveBeenCalled();
     });
   });
+
+  describe('unknown rule-type ids (registry reject-by-name — D1)', () => {
+    it('CREATE 400s an unregistered mode, naming the id, before touching any client', async () => {
+      registerMonitorRoutes(router, logger, writerAuth);
+      const handler = findHandler(router, 'post', '/api/tlsoc/detection/monitors');
+
+      const soFind = jest.fn();
+      const transportRequest = jest.fn();
+      const context = makeContext({
+        soClient: { find: soFind },
+        esClient: { transport: { request: transportRequest } },
+      });
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'sequence', rule: statefulRule },
+      });
+      const response = httpServerMock.createResponseFactory();
+
+      await handler(context, request, response);
+
+      expect(response.badRequest).toHaveBeenCalledWith({
+        body: { message: expect.stringContaining('"sequence"') },
+      });
+      expect(response.ok).not.toHaveBeenCalled();
+      expect(soFind).not.toHaveBeenCalled();
+      expect(transportRequest).not.toHaveBeenCalled();
+    });
+
+    it('UPDATE 400s an unregistered mode, naming the id', async () => {
+      registerMonitorRoutes(router, logger, writerAuth);
+      const handler = findHandler(router, 'put', '/api/tlsoc/detection/monitors/{soId}');
+
+      const context = makeContext();
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        params: { soId: 'so1' },
+        body: { mode: 'sequence', rule: statefulRule },
+      });
+      const response = httpServerMock.createResponseFactory();
+
+      await handler(context, request, response);
+
+      expect(response.badRequest).toHaveBeenCalledWith({
+        body: { message: expect.stringContaining('"sequence"') },
+      });
+      expect(response.ok).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -4,19 +4,15 @@
  */
 
 import { RuleDefinition, ThresholdRuleDefinition } from './types';
-import { compileToDocLevelMonitor } from './monitor';
-import { compileToBucketLevelMonitor } from './bucket_monitor';
-
-/** The two detection modes the builder can author (mirrors the public UI's DetectionMode). */
-export type DetectionMode = 'stateful' | 'stateless';
+import { DetectionMode, getType } from './registry';
 
 /**
  * Compile a no-code rule to the OpenSearch Alerting monitor to PERSIST (Task 3.5a, decision D-008).
  *
- * The result is the SAME compiler output the dry-run uses ({@link compileToBucketLevelMonitor} /
- * {@link compileToDocLevelMonitor}), so a SAVED monitor runs exactly what `_execute` already proved
- * fires — there is no second path. Throws (never builds) on an invalid rule, reusing the compiler's
- * own `assertValid*Rule` validators, so a bad rule never reaches the cluster.
+ * Dispatches through the rule-type registry ({@link getType}), so the result is the SAME compiler
+ * output the dry-run uses — a SAVED monitor runs exactly what `_execute` already proved fires; there
+ * is no second path. Throws (never builds) on an invalid rule, reusing the compiler's own
+ * `assertValid*Rule` validators, so a bad rule never reaches the cluster.
  *
  * The monitor is a PURE EXECUTOR — it does NOT carry the original rule. OpenSearch 3.7 Alerting
  * strips `ui_metadata` on persist (verified live: create echoes it, GET returns it stripped), so the
@@ -27,12 +23,7 @@ export function buildMonitorForSave(
   mode: DetectionMode,
   rule: RuleDefinition | ThresholdRuleDefinition
 ): Record<string, unknown> {
-  return mode === 'stateful'
-    ? ((compileToBucketLevelMonitor(rule as ThresholdRuleDefinition) as unknown) as Record<
-        string,
-        unknown
-      >)
-    : ((compileToDocLevelMonitor(rule as RuleDefinition) as unknown) as Record<string, unknown>);
+  return getType(mode).compile(rule);
 }
 
 /**

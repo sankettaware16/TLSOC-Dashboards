@@ -23,13 +23,15 @@ import {
   EuiTitle,
 } from '@elastic/eui';
 import { CoreStart } from 'opensearch-dashboards/public';
+import { DetectionMode } from '../../common/detection';
 import { EnabledToggle } from './enabled_toggle';
+import { findUiType } from './type_registry';
 
 /** One row of the saved-detections list (shape returned by GET /api/tlsoc/detection/monitors). */
 export interface SavedRuleRow {
   soId: string;
   name: string;
-  mode: 'stateful' | 'stateless';
+  mode: DetectionMode;
   severity: string;
   index?: string;
   executionAlias?: string;
@@ -95,11 +97,12 @@ export function SavedRulesList({ core, onCreate, onEdit, onImport }: Props) {
     {
       field: 'mode',
       name: 'Type',
-      render: (m: string) => (
-        <EuiBadge color={m === 'stateful' ? 'primary' : 'hollow'}>
-          {m === 'stateful' ? 'Threshold' : 'Single-event'}
-        </EuiBadge>
-      ),
+      // Badge label/color come from the UI registry; an unregistered mode (a rule saved by a newer
+      // TLSOC) degrades to its raw id in a hollow badge instead of crashing the list.
+      render: (m: string) => {
+        const badge = findUiType(m)?.listBadge;
+        return <EuiBadge color={badge?.color ?? 'hollow'}>{badge?.label ?? m}</EuiBadge>;
+      },
     },
     { field: 'severity', name: 'Severity', sortable: true },
     {

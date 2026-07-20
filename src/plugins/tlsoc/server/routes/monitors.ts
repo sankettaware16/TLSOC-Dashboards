@@ -13,6 +13,7 @@ import {
   workspaceForbidden,
 } from '../lib/authz';
 import {
+  DetectionMode,
   DetectionRuleAttributes,
   RuleDefinition,
   ThresholdRuleDefinition,
@@ -20,6 +21,9 @@ import {
   deriveAliasName,
   desiredExecutionTargets,
   executionTargetsDiffer,
+  getType,
+  isValidMode,
+  unknownTypeMessage,
 } from '../../common/detection';
 import { DETECTION_RULE_SO_TYPE } from '../saved_objects';
 
@@ -37,7 +41,7 @@ class RouteError extends Error {
 
 type EsClient = any;
 type SaveBody = {
-  mode: 'stateful' | 'stateless';
+  mode: DetectionMode;
   rule: Record<string, unknown>;
   /** PROB-19: create/update-time enable state. Absent → default true (create) or "keep current" (update). */
   enabled?: boolean;
@@ -100,7 +104,7 @@ async function addPerIndexAliases(esClient: EsClient, concreteIndices: string[])
 async function prepareMonitor(
   esClient: EsClient,
   logger: Logger,
-  mode: 'stateful' | 'stateless',
+  mode: DetectionMode,
   rule: Record<string, unknown>
 ): Promise<{ monitor: Record<string, any>; executionAlias?: string; executionTargets?: string[] }> {
   let monitor: Record<string, any>;
@@ -116,7 +120,9 @@ async function prepareMonitor(
   let executionAlias: string | undefined;
   let executionTargets: string[] | undefined;
   const ruleIndex = ((rule as any).index as string) ?? '';
-  if (mode === 'stateless' && /[.*]/.test(ruleIndex)) {
+  // Keyed off the registry's monitorKind, NOT the 'stateless' literal: EVERY doc-level type needs
+  // the per-index alias routing (doc-level monitors reject dotted/patterned indices — #1290).
+  if (getType(mode).monitorKind === 'doc' && /[.*]/.test(ruleIndex)) {
     // Display-identity string only (backcompat for existing LIST/GET-ONE/UI consumers) — NOT
     // necessarily a live alias any more; `executionTargets` below is what the monitor actually runs.
     executionAlias = deriveAliasName(ruleIndex);
@@ -179,9 +185,13 @@ export async function syncStatelessMonitorTargets(
   try {
     // Same "scan all + filter" idiom as buildRuleRefMap (server/routes/alerts.ts) — this SO type
     // has no dedicated query filter set up, and 1000 rules is the plugin-wide honesty cap already
-    // used everywhere else this SO type is scanned.
+    // used everywhere else this SO type is scanned. The filter keys off the registry's monitorKind
+    // (every doc-level type needs this drift repair, not just 'stateless'); an unregistered mode
+    // (e.g. a rule saved by a newer TLSOC) is skipped, never crashed on.
     const found = await soClient.find<DetectionRuleAttributes>({ type: TYPE, perPage: 1000 });
-    statelessRules = found.saved_objects.filter((so) => so.attributes.mode === 'stateless');
+    statelessRules = found.saved_objects.filter(
+      (so) => isValidMode(so.attributes.mode) && getType(so.attributes.mode).monitorKind === 'doc'
+    );
   } catch (err) {
     logger.warn(`tlsoc syncStatelessMonitorTargets: could not list rules, skipping this sweep: ${err.message}`);
     return;
@@ -261,7 +271,9 @@ async function nameConflict(
 
 const bodyValidation = {
   body: schema.object({
-    mode: schema.oneOf([schema.literal('stateful'), schema.literal('stateless')]),
+    // The in-handler registry check replaces the old schema.oneOf mode literals, so a new registry
+    // type needs no edit here; an unknown id 400s BY NAME instead of a generic schema error.
+    mode: schema.string(),
     rule: schema.object({}, { unknowns: 'allow' }),
     enabled: schema.maybe(schema.boolean()),
   }),
@@ -281,6 +293,9 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
       return forbidden(response, 'create detections');
     }
     const { mode, rule, enabled } = request.body as SaveBody;
+    if (!isValidMode(mode)) {
+      return response.badRequest({ body: { message: unknownTypeMessage(mode) } });
+    }
     const soClient = context.core.savedObjects.client;
     const esClient = context.core.opensearch.client.asCurrentUser;
     const name = ((rule as any).name as string)?.trim() || 'Untitled detection';
@@ -444,6 +459,9 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
         return forbidden(response, 'edit detections');
       }
       const { mode, rule, enabled } = request.body as SaveBody;
+      if (!isValidMode(mode)) {
+        return response.badRequest({ body: { message: unknownTypeMessage(mode) } });
+      }
       const { soId } = request.params as { soId: string };
       const soClient = context.core.savedObjects.client;
       const esClient = context.core.opensearch.client.asCurrentUser;
