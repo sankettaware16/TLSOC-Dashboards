@@ -216,6 +216,13 @@ export function Header({
 
   const setIsNavOpen = useCallback(
     (value: boolean) => {
+      // TLSOC PROB-28: OuiToolTip positions once on show and dismisses only on
+      // mouseout/blur/anchor-unmount, so a tooltip held open by a FOCUSED control freezes
+      // detached at stale coordinates when the push flyout reflows the page. Blur the active
+      // element before toggling so any focus-pinned tooltip closes with the nav.
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
       if (enableIconSideNav) {
         // In icon side nav mode, toggle opens/closes the temp expansion
         if (isLocked) {

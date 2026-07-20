@@ -6,6 +6,7 @@
 import { i18n } from '@osd/i18n';
 import { Subscription } from 'rxjs';
 import {
+  AppCategory,
   AppMountParameters,
   CoreSetup,
   CoreStart,
@@ -203,6 +204,21 @@ export class TlsocPlugin {
     // plus "Administration" (the existing management app: index patterns, saved objects, advanced
     // settings, …) as the final section. ("Investigations"=Discover and "Dashboards" are added to the
     // same group by their own plugins.)
+    //
+    // PROB-28 Option B (tester decision 2026-07-20): the three GLOBAL-ONLY entries below (their apps
+    // are outsideWorkspace/admin-gated, so they drop out of the in-workspace nav) sit in their own
+    // labeled trailing category. That way the nav changing between inside/outside a workspace reads
+    // as intentional. Grouping/label only — app ids, routes and per-link orders untouched. Category
+    // order 8500 lands the section after the flat SOC links (10–90) and before the workspace
+    // plugin's "Manage workspace" category (9000). In the SOC use case categories render as
+    // always-open labeled sections (collapsing is an ALL-use-case-only behavior).
+    const globalAdministrationCategory: AppCategory = {
+      id: 'tlsoc_global_administration',
+      label: i18n.translate('tlsoc.nav.globalAdministration', {
+        defaultMessage: 'Global administration',
+      }),
+      order: 8500,
+    };
     core.chrome.navGroup.addNavLinksToGroup(DEFAULT_NAV_GROUPS['security-analytics'], [
       ...sections.map((section) => ({
         id: section.id,
@@ -217,6 +233,7 @@ export class TlsocPlugin {
         id: 'security-dashboards-plugin_getstarted',
         title: i18n.translate('tlsoc.nav.userManagement', { defaultMessage: 'User management' }),
         order: 85,
+        category: globalAdministrationCategory,
       },
       {
         // Organizations → the stock workspace list (1 workspace = 1 org per D-014; task 5b.5).
@@ -226,6 +243,7 @@ export class TlsocPlugin {
         id: 'workspace_list',
         title: i18n.translate('tlsoc.nav.organizations', { defaultMessage: 'Organizations' }),
         order: 87,
+        category: globalAdministrationCategory,
       },
       {
         // Administration → the management "Settings and setup" landing (index patterns, saved objects,
@@ -235,6 +253,7 @@ export class TlsocPlugin {
         id: 'settings_landing',
         title: i18n.translate('tlsoc.nav.administration', { defaultMessage: 'Administration' }),
         order: 90,
+        category: globalAdministrationCategory,
       },
     ]);
 
