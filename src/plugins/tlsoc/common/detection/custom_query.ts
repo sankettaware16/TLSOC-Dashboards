@@ -4,7 +4,7 @@
  */
 
 import { RuleMetadataFields, Severity, TimeWindow } from './types';
-import { SEVERITY_TO_MONITOR_SEVERITY, slugify } from './internal';
+import { SEVERITY_TO_MONITOR_SEVERITY, assertValidTimeWindowUnit, slugify } from './internal';
 import { DocLevelMonitor } from './monitor';
 import { formatDqlTranslationErrors, translateDqlToLucene } from './dql_to_lucene';
 
@@ -90,8 +90,11 @@ export function assertValidCustomQueryRule(rule: CustomQueryRuleDefinition): voi
       `Custom-query rule "${rule.name}" has an unknown severity "${String(rule.severity)}".`
     );
   }
-  if (rule.runEvery && !(rule.runEvery.value > 0 && Number.isInteger(rule.runEvery.value))) {
-    throw new Error(`Custom-query rule "${rule.name}" must have a positive run-every value.`);
+  if (rule.runEvery) {
+    if (!(rule.runEvery.value > 0 && Number.isInteger(rule.runEvery.value))) {
+      throw new Error(`Custom-query rule "${rule.name}" must have a positive run-every value.`);
+    }
+    assertValidTimeWindowUnit(rule.runEvery, 'run-every', `Custom-query rule "${rule.name}"`);
   }
   // For DQL, a rule that cannot translate must never validate: surface the translator's
   // rejection here so the registry's validate() catches everything compile would throw.

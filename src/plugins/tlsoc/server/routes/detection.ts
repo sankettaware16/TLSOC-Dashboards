@@ -5,7 +5,13 @@
 
 import { schema } from '@osd/config-schema';
 import { IRouter, Logger } from '../../../../core/server';
-import { getType, isValidMode, unknownTypeMessage } from '../../common/detection';
+import {
+  DETECTION_STATE_INDEX,
+  getType,
+  isValidMode,
+  unknownTypeMessage,
+} from '../../common/detection';
+import { ensureStateIndex } from '../lib/new_terms_state';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -68,6 +74,40 @@ export function registerExecuteDetectionRoute(router: IRouter, logger: Logger) {
         return response.badRequest({ body: { message: unknownTypeMessage(mode) } });
       }
       const ruleType = getType(mode);
+      const client = context.core.opensearch.client.asCurrentUser;
+
+      // v1.2.3 D5: a new-terms compile REQUIRES a seen-state doc id, and the compiled monitor's
+      // terms-lookup doc MUST exist (a missing lookup doc's engine behavior is UNVERIFIED and
+      // must never be relied on). Edit flow: the client sends the saved rule's stateDocId → a
+      // true preview against the LIVE seen set. Unsaved rule: inject a shared EMPTY preview doc,
+      // so the dry-run treats every value in the scan window as new (the seen snapshot is taken
+      // at save — the builder copy says exactly this).
+      if (mode === 'new_terms') {
+        const sentDocId = (rule as any).stateDocId;
+        if (typeof sentDocId !== 'string' || sentDocId === '') {
+          try {
+            await ensureStateIndex(client);
+            await client.index({
+              index: DETECTION_STATE_INDEX,
+              id: 'seen-preview',
+              refresh: 'wait_for',
+              body: {
+                rule_id: 'preview',
+                values: [],
+                truncated: false,
+                updated_at: new Date().toISOString(),
+              },
+            });
+          } catch (err) {
+            logger.error(`tlsoc detection _execute: new-terms preview doc failed: ${err.message}`);
+            return response.customError({
+              statusCode: err.meta?.statusCode ?? 500,
+              body: { message: `Could not prepare the new-terms preview: ${err.message}` },
+            });
+          }
+          (rule as any).stateDocId = 'seen-preview';
+        }
+      }
 
       // 1) Compile the rule via the type registry (the same unit-tested code in common/detection).
       let monitor: Record<string, any>;
@@ -95,7 +135,6 @@ export function registerExecuteDetectionRoute(router: IRouter, logger: Logger) {
       }
 
       // 3) Dry-run against the cluster (no save, no actions): POST .../monitors/_execute?dryrun=true.
-      const client = context.core.opensearch.client.asCurrentUser;
       try {
         const executed = await client.transport.request({
           method: 'POST',

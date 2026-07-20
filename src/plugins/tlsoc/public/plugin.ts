@@ -194,6 +194,12 @@ export class TlsocPlugin {
               data: (plugins as { data: DataPublicPluginStart }).data,
             });
           }
+          // v1.2.3 D6: the "Threat Intel" section hosts the value-lists (IOC) manager.
+          if (section.id === 'tlsoc_threat_intel') {
+            const [coreStart] = await core.getStartServices();
+            const { renderThreatIntelApp } = await import('./application');
+            return renderThreatIntelApp(params, { core: coreStart });
+          }
           const { renderApp } = await import('./application');
           return renderApp(params, section.page);
         },

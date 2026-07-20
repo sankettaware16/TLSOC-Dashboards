@@ -9,7 +9,9 @@ import { schema } from '@osd/config-schema';
 import { HttpAuth, IRouter, Logger, SavedObjectsClientContract } from '../../../../core/server';
 import { ALERT_ACKNOWLEDGERS, callerHasAnyRole, forbidden } from '../lib/authz';
 import { DetectionRuleAttributes } from '../../common/detection';
+import { refreshSeenValuesSweep } from '../lib/new_terms_state';
 import { syncStatelessMonitorTargets } from './monitors';
+import { syncIndicatorListMonitors } from './value_lists';
 import {
   RuleRefMap,
   TlsocAlert,
@@ -188,6 +190,25 @@ export function registerAlertRoutes(router: IRouter, logger: Logger, auth?: Http
         context.core.savedObjects.client,
         logger
       ).catch((err) => logger.warn(`tlsoc alerts: background execution-target sync failed: ${err.message}`));
+
+      // v1.2.3 D5: same fire-and-forget contract as its neighbor — caller's credentials,
+      // internally 60s-debounced BEFORE the SO scan, never blocks or fails this request. Closes
+      // the new-terms alert lifecycle: value fires → sweep marks it seen (≤~60s while anyone has
+      // TLSOC open) → next monitor run drops the bucket → alert auto-COMPLETEs.
+      void refreshSeenValuesSweep(
+        context.core.opensearch.client.asCurrentUser,
+        context.core.savedObjects.client,
+        logger
+      ).catch((err) => logger.warn(`tlsoc alerts: background seen-values sweep failed: ${err.message}`));
+
+      // v1.2.3 D6: inline indicator-match monitors bake list values into their query — this
+      // rewrites drifted ones after out-of-band list edits (the value-list PUT route already
+      // fires it force:true for UI edits). Same never-throws, 60s-debounced contract.
+      void syncIndicatorListMonitors(
+        context.core.opensearch.client.asCurrentUser,
+        context.core.savedObjects.client,
+        logger
+      ).catch((err) => logger.warn(`tlsoc alerts: background indicator-list sync failed: ${err.message}`));
 
       try {
         const q = request.query as Record<string, any>;

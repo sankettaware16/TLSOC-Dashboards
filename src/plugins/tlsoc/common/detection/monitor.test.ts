@@ -110,4 +110,15 @@ describe('compileToDocLevelMonitor — configurable run-every schedule (WS-20)',
       )
     ).toThrow(/positive run-every value/);
   });
+
+  it('rejects a non-member runEvery unit BY NAME (W3 review fix-the-class)', () => {
+    expect(() =>
+      compileToDocLevelMonitor(
+        ruleWith(
+          { field: 'event.module', operator: 'equals', value: 'ssh' },
+          { runEvery: { value: 5, unit: 'weeks' as never } }
+        )
+      )
+    ).toThrow(/unknown run-every unit "weeks"/);
+  });
 });

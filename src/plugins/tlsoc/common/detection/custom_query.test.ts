@@ -269,6 +269,15 @@ describe('assertValidCustomQueryRule — reject-by-name validation', () => {
     ).toThrow('Custom-query rule "Suspicious admin probe" must have a positive run-every value.');
   });
 
+  it('a non-member runEvery unit is rejected BY NAME (W3 review fix-the-class)', () => {
+    expect(() =>
+      assertValidCustomQueryRule(luceneRule({ runEvery: { value: 5, unit: 'weeks' as never } }))
+    ).toThrow(
+      'Custom-query rule "Suspicious admin probe" has an unknown run-every unit "weeks". ' +
+        'Supported: MINUTES, HOURS, DAYS.'
+    );
+  });
+
   it('a kuery rule outside the subset fails VALIDATION too (validate ⊇ compile throws)', () => {
     expect(() =>
       assertValidCustomQueryRule(luceneRule({ language: 'kuery', queryText: 'machine*:web' }))

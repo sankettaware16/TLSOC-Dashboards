@@ -12,6 +12,7 @@ import { DetectionsApp } from './detection/detections_app';
 import { AlertsApp } from './alerts/alerts_app';
 import { CasesApp } from './cases/cases_app';
 import { OverviewApp } from './overview/overview_app';
+import { ThreatIntelApp } from './threat_intel/threat_intel_app';
 
 /**
  * Mounts a TLSOC placeholder section into the app shell. The same render path backs
@@ -64,6 +65,17 @@ export const renderCasesApp = (
 ) => {
   const root = createRoot(element);
   root.render(<CasesApp core={deps.core} data={deps.data} />);
+
+  return () => root.unmount();
+};
+
+/** Mounts the "Threat Intel" section: the value-lists (IOC) manager (v1.2.3 D6). */
+export const renderThreatIntelApp = (
+  { element }: AppMountParameters,
+  deps: { core: CoreStart }
+) => {
+  const root = createRoot(element);
+  root.render(<ThreatIntelApp core={deps.core} />);
 
   return () => root.unmount();
 };

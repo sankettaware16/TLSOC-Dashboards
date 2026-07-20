@@ -40,7 +40,10 @@ import {
   Condition,
   ConditionGroup,
   CountThreshold,
+  DEFAULT_NEW_TERMS_HISTORY_WINDOW,
   DetectionMode,
+  IndicatorMatchRuleDefinition,
+  NewTermsRuleDefinition,
   PplRuleDefinition,
   RuleDefinition,
   RuleMetadataFields,
@@ -76,7 +79,9 @@ interface Props {
     | RuleDefinition
     | ThresholdRuleDefinition
     | PplRuleDefinition
-    | CustomQueryRuleDefinition;
+    | CustomQueryRuleDefinition
+    | NewTermsRuleDefinition
+    | IndicatorMatchRuleDefinition;
   /** Initial enabled state (edit hydration). Defaults to true for a brand-new detection. */
   initialEnabled?: boolean;
   /** Warnings from a Sigma import that produced this rule — surfaced at the top of the form. */
@@ -95,6 +100,8 @@ function seedFrom(
     | ThresholdRuleDefinition
     | PplRuleDefinition
     | CustomQueryRuleDefinition
+    | NewTermsRuleDefinition
+    | IndicatorMatchRuleDefinition
 ) {
   const mode: DetectionMode = initialMode ?? 'stateful';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -138,6 +145,17 @@ function seedFrom(
     // v1.2.3 W2c (D2): the custom-query rule's text + language (IR field is `language`).
     queryText: (r?.queryText as string) ?? '',
     queryLanguage: (r?.language as CustomQueryLanguage) ?? 'kuery',
+    // v1.2.3 W3a (D5): the new-terms rule's term field + history window; stateDocId rides along
+    // on edit so the Test panel previews against the LIVE seen set (the save route re-injects it
+    // authoritatively on every PUT, so carrying it is harmless).
+    termField: (r?.termField as string) ?? '',
+    historyWindow: (r?.historyWindow as TimeWindow) ?? DEFAULT_NEW_TERMS_HISTORY_WINDOW,
+    stateDocId: (r?.stateDocId as string | undefined) ?? undefined,
+    // v1.2.3 W3b (D6): the indicator-match rule's list + event field; listMode is display/
+    // lossless-edit only — the server re-picks it from the list's size on every save.
+    listId: (r?.listId as string) ?? '',
+    eventField: (r?.eventField as string) ?? '',
+    listMode: (r?.listMode as 'inline' | 'lookup') ?? 'inline',
   };
 }
 
@@ -205,6 +223,12 @@ export function DetectionBuilder({
   // v1.2.3 W2c (D2): the custom-query rule's text + language.
   const [queryText, setQueryText] = useState<string>(seed.queryText);
   const [queryLanguage, setQueryLanguage] = useState<CustomQueryLanguage>(seed.queryLanguage);
+  // v1.2.3 W3a (D5): the new-terms rule's term field + history window.
+  const [termField, setTermField] = useState<string>(seed.termField);
+  const [historyWindow, setHistoryWindow] = useState<TimeWindow>(seed.historyWindow);
+  // v1.2.3 W3b (D6): the indicator-match rule's value list + event field.
+  const [listId, setListId] = useState<string>(seed.listId);
+  const [eventField, setEventField] = useState<string>(seed.eventField);
 
   // Triage & context (optional) — WS-1, PROB-1.
   const [threat, setThreat] = useState<ThreatEntry[]>(seed.threat);
@@ -331,7 +355,12 @@ export function DetectionBuilder({
    * type's state into another type's save payload.
    */
   const currentRule = useMemo<
-    RuleDefinition | ThresholdRuleDefinition | PplRuleDefinition | CustomQueryRuleDefinition
+    | RuleDefinition
+    | ThresholdRuleDefinition
+    | PplRuleDefinition
+    | CustomQueryRuleDefinition
+    | NewTermsRuleDefinition
+    | IndicatorMatchRuleDefinition
   >(() => {
     const cleaned = cleanConditions(conditions);
     const index = selectedView?.title ?? '';
@@ -389,6 +418,38 @@ export function DetectionBuilder({
         ...metadata,
       };
     }
+    if (mode === 'new_terms') {
+      return {
+        name: ruleName,
+        severity,
+        index,
+        termField,
+        historyWindow,
+        ...(cleaned.length ? { filter: { logic, conditions: cleaned } } : {}),
+        // Set explicitly — never rely on the editor's mirror effect having run. The validator
+        // requires exactly [termField]; its own "term field required" check fires first when empty.
+        groupBy: [termField],
+        // Edit flow only (seedFrom): lets the Test panel dry-run against the LIVE seen set; the
+        // save route re-injects/re-derives it authoritatively on every save.
+        ...(seed.stateDocId ? { stateDocId: seed.stateDocId } : {}),
+        ...(runEvery ? { runEvery } : {}),
+        ...metadata,
+      };
+    }
+    if (mode === 'indicator_match') {
+      return {
+        name: ruleName,
+        severity,
+        index,
+        eventField,
+        listId,
+        listMode: seed.listMode, // display/lossless-edit only — the server re-picks on save
+        ...(cleaned.length ? { filter: { logic, conditions: cleaned } } : {}),
+        groupBy: eventField ? [eventField] : [], // the validator's [eventField] invariant
+        ...(runEvery ? { runEvery } : {}),
+        ...metadata,
+      };
+    }
     return {
       name: ruleName,
       severity,
@@ -429,6 +490,10 @@ export function DetectionBuilder({
     seed,
     queryText,
     queryLanguage,
+    termField,
+    historyWindow,
+    listId,
+    eventField,
   ]);
 
   /**
@@ -454,6 +519,13 @@ export function DetectionBuilder({
         if (pplFieldResolution.status === 'blocked') {
           return { ok: false, error: pplFieldResolution.reason };
         }
+        ruleType.compile(currentRule);
+      }
+      // v1.2.3 D6: indicator_match has neither a toSigma nor a doc-kind compile below, so gate
+      // Save via the PURE (lookup) compile — it names a missing list/field/groupBy pre-save.
+      // (new_terms CANNOT be compile-gated here: its compile requires the route-owned stateDocId,
+      // absent on an unsaved rule by design — its Save gate is the explicit termField check below.)
+      if (ruleType.id === 'indicator_match') {
         ruleType.compile(currentRule);
       }
       return {
@@ -546,6 +618,15 @@ export function DetectionBuilder({
       : null;
   // ----------------------------------------------------------------------------------------------
 
+  /**
+   * v1.2.3 D5: the new-terms Save gate. Its compile cannot gate Save client-side (the route owns
+   * the seen-state doc id it requires), so the one authoring precondition is checked explicitly.
+   */
+  const newTermsBlockReason =
+    mode === 'new_terms' && termField === ''
+      ? 'Pick the term field whose first-seen values fire.'
+      : null;
+
   const onSave = async () => {
     setSaving(true);
     setSaveError(null);
@@ -569,6 +650,24 @@ export function DetectionBuilder({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const r = resp as any;
       setSaveResult({ id: r?.id, name: r?.name });
+      // v1.2.3 W3 review (fix 5): the create/update response's ADDITIVE `seenValues` field
+      // (new_terms only) surfaces the bootstrap snapshot's honesty flags as toasts — a silent
+      // degraded/empty seen set is exactly the class this release bans.
+      const seen = r?.seenValues as { count: number; truncated: boolean } | undefined;
+      if (seen?.truncated) {
+        core.notifications.toasts.addWarning({
+          title: 'Seen-value tracking is degraded for this rule',
+          text:
+            'seen-value tracking truncated at 65,536 — values beyond the cap will alert as new',
+        });
+      } else if (seen && seen.count === 0) {
+        core.notifications.toasts.addInfo({
+          title: 'The seen-values snapshot is empty',
+          text:
+            'Nothing in the history window matched, so EVERY value this rule scans will alert ' +
+            'as new until the seen set builds up.',
+        });
+      }
       // Return to the list (the new/updated row IS the confirmation).
       if (onDone) onDone();
     } catch (e) {
@@ -586,8 +685,12 @@ export function DetectionBuilder({
   const removeCondition = (index: number) =>
     setConditions((cs) => cs.filter((_, i) => i !== index));
 
+  // v1.2.3 D5: a new-terms rule needs only a data view + term field to dry-run (the pre-filter
+  // is optional); the stateful panel keeps its original conditions/group-by gating.
   const canTest =
-    !!selectedView && conditions.some((c) => c.field) && groupBy.length > 0 && !testing;
+    mode === 'new_terms'
+      ? !!selectedView && termField !== '' && !testing
+      : !!selectedView && conditions.some((c) => c.field) && groupBy.length > 0 && !testing;
 
   const onTest = async () => {
     setTesting(true);
@@ -605,11 +708,14 @@ export function DetectionBuilder({
         // D4: same re-stamp as currentRule, so Test exercises the advanced compile path too.
         ...(advanced ? { advanced: { ...advanced, by: groupBy } } : {}),
       };
-      const body = JSON.stringify({
-        mode: 'stateful',
-        rule,
-        ...(from && to ? { timeRange: { from, to } } : {}),
-      });
+      // v1.2.3 D5: new_terms posts its REAL mode + currentRule so the _execute route's seen-state
+      // branch runs (unsaved rules get an empty preview doc — everything in the window is "new";
+      // edits carry stateDocId → a true preview). The stateful body stays byte-identical.
+      const body = JSON.stringify(
+        mode === 'new_terms'
+          ? { mode, rule: currentRule, ...(from && to ? { timeRange: { from, to } } : {}) }
+          : { mode: 'stateful', rule, ...(from && to ? { timeRange: { from, to } } : {}) }
+      );
       const resp = await core.http.post('/api/tlsoc/detection/_execute', { body });
       setResult(resp);
     } catch (e) {
@@ -646,10 +752,16 @@ export function DetectionBuilder({
   // Doc-level monitors are rejected by OpenSearch 3.7 for index names containing "." or "*".
   // Rather than block Save, a doc-kind rule on such an index runs against a dot-free ALIAS the
   // server links on save (Task 3.5b). When that applies, surface the alias name + the Logstash
-  // note. Keyed off the registry's monitorKind — every doc-kind type needs this, not just
-  // 'stateless' (same generalization as the server's prepareMonitor).
+  // note. Keyed off the registry's monitorKind PLUS the indicator_match INLINE case (v1.2.3 W3
+  // review, fix 8): the hybrid's registry kind is 'bucket' (its pure lookup compile), but an
+  // inline-listMode draft compiles to a DOC-level monitor on save and alias-routes exactly like
+  // 'stateless' does — same generalization as the server's prepareMonitor, which keys off the
+  // COMPILED monitor_type.
+  const isInlineIndicatorDraft =
+    mode === 'indicator_match' &&
+    (currentRule as IndicatorMatchRuleDefinition).listMode === 'inline';
   const statelessAlias =
-    ruleType.monitorKind === 'doc' && /[.*]/.test(currentRule.index)
+    (ruleType.monitorKind === 'doc' || isInlineIndicatorDraft) && /[.*]/.test(currentRule.index)
       ? deriveAliasName(currentRule.index)
       : null;
 
@@ -706,8 +818,19 @@ export function DetectionBuilder({
               <h2>Detection type</h2>
             </EuiTitle>
             <EuiSpacer size="s" />
+            {isEdit ? (
+              <>
+                {/* v1.2.3 D-A: the type is IMMUTABLE after creation — the server 400s a
+                    mode-changing PUT, and the cards below render disabled to say so up front. */}
+                <EuiText size="s" color="subdued">
+                  <p>The rule type cannot be changed after creation — create a new rule instead.</p>
+                </EuiText>
+                <EuiSpacer size="s" />
+              </>
+            ) : null}
             {/* The Elastic-shaped type-chooser card grid, sourced from the UI registry — a new
-                type's card appears by registering it, with no edit here (v1.2.3 D1). */}
+                type's card appears by registering it, with no edit here (v1.2.3 D1). In EDIT
+                sessions the grid is LOCKED (D-A): the saved rule's type stays selected. */}
             <EuiFlexGroup gutterSize="m" wrap>
               {listUiTypes().map((t) => (
                 <EuiFlexItem key={t.id} grow={false} style={{ width: 320 }}>
@@ -720,6 +843,7 @@ export function DetectionBuilder({
                     selectable={{
                       onClick: () => onModeChange(t.id),
                       isSelected: mode === t.id,
+                      isDisabled: isEdit,
                     }}
                   />
                 </EuiFlexItem>
@@ -769,8 +893,21 @@ export function DetectionBuilder({
               onConditionChange={updateCondition}
               onConditionAdd={addCondition}
               onConditionRemove={removeCondition}
-              groupBy={mode === 'ppl' ? pplGroupBy : groupBy}
-              onGroupByChange={mode === 'ppl' ? setPplGroupBy : setGroupBy}
+              // new_terms gets a DERIVED slice ([termField]) so its editor's groupBy mirror can
+              // never clobber the threshold draft's group-bys (the W2 ppl cross-type-leak class);
+              // currentRule sets groupBy: [termField] explicitly from the same source.
+              groupBy={
+                mode === 'ppl'
+                  ? pplGroupBy
+                  : mode === 'new_terms'
+                  ? termField
+                    ? [termField]
+                    : []
+                  : groupBy
+              }
+              onGroupByChange={
+                mode === 'ppl' ? setPplGroupBy : mode === 'new_terms' ? () => {} : setGroupBy
+              }
               windowValue={windowValue}
               onWindowValueChange={setWindowValue}
               windowUnit={windowUnit}
@@ -794,16 +931,31 @@ export function DetectionBuilder({
               onQueryLanguageChange={setQueryLanguage}
               queryCheck={freshQueryCheck}
               onQueryValidate={onQueryValidateRequest}
+              termField={termField}
+              onTermFieldChange={setTermField}
+              historyWindowValue={historyWindow.value}
+              historyWindowUnit={historyWindow.unit}
+              onHistoryWindowValueChange={(v) => setHistoryWindow((w) => ({ ...w, value: v }))}
+              onHistoryWindowUnitChange={(u) => setHistoryWindow((w) => ({ ...w, unit: u }))}
+              listId={listId}
+              onListIdChange={setListId}
+              eventField={eventField}
+              onEventFieldChange={setEventField}
             />
           </Suspense>
           <EuiSpacer size="m" />
 
-          {/* Every bucket-kind type has a rule window T that caps the cadence (R ≤ T) — keyed
-              off the registry's monitorKind, not a mode literal, so 'ppl' gets it too. */}
+          {/* Every bucket-kind type with a rule window T gets the R ≤ T cap — keyed off the
+              registry's monitorKind, not a mode literal, so 'ppl' gets it too. Two v1.2.3 W3
+              exemptions: new_terms has NO separate window (the scan cadence IS the window — the
+              doc-kind "1-minute default" copy is exactly true), and indicator_match likewise
+              (runEvery IS the lookup window in its bucket shape). */}
           <ScheduleSection
             runEvery={runEvery}
             window={
-              ruleType.monitorKind === 'bucket'
+              ruleType.monitorKind === 'bucket' &&
+              ruleType.id !== 'new_terms' &&
+              ruleType.id !== 'indicator_match'
                 ? { value: windowValue, unit: windowUnit }
                 : undefined
             }
@@ -1004,6 +1156,10 @@ export function DetectionBuilder({
             <EuiText size="s" color="subdued">
               <p>
                 Dry-runs the rule against the data view over the time range below. Nothing is saved.
+                {mode === 'new_terms' && !seed.stateDocId
+                  ? ' For an unsaved new-terms rule the preview treats every value in the scan ' +
+                    'window as new — the seen-values snapshot is taken when you save.'
+                  : ''}
               </p>
             </EuiText>
             <EuiFlexGroup>
@@ -1148,7 +1304,13 @@ export function DetectionBuilder({
               iconType="save"
               onClick={onSave}
               isLoading={saving}
-              isDisabled={!preview.ok || !!customQueryBlockReason || saving || !!saveResult}
+              isDisabled={
+                !preview.ok ||
+                !!customQueryBlockReason ||
+                !!newTermsBlockReason ||
+                saving ||
+                !!saveResult
+              }
             >
               {saveResult ? 'Saved ✓' : isEdit ? 'Update detection' : 'Save detection'}
             </EuiButton>
@@ -1161,13 +1323,14 @@ export function DetectionBuilder({
                   <p>Finish the rule to enable saving — {preview.error}</p>
                 </EuiText>
               </>
-            ) : customQueryBlockReason ? (
+            ) : customQueryBlockReason || newTermsBlockReason ? (
               <>
                 <EuiSpacer size="s" />
                 {/* W2 review (BLOCKING-2): a failed/pending cluster validation blocks Save with
-                    its reason (the editor shows the same verdict next to the query bar). */}
+                    its reason (the editor shows the same verdict next to the query bar).
+                    v1.2.3 D5: the new-terms termField gate surfaces here the same way. */}
                 <EuiText size="s" color="subdued">
-                  <p>Save is blocked — {customQueryBlockReason}</p>
+                  <p>Save is blocked — {customQueryBlockReason ?? newTermsBlockReason}</p>
                 </EuiText>
               </>
             ) : null}

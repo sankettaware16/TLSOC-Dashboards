@@ -67,3 +67,23 @@ export {
   likePatternToWildcard,
 } from './ppl_rule';
 export type { PplRuleDefinition, ResolveField } from './ppl_rule';
+// v1.2.3 W3a — the D5 new-terms (first-seen) rule IR + compiler + seen-state constants.
+export {
+  DEFAULT_NEW_TERMS_HISTORY_WINDOW,
+  DETECTION_STATE_INDEX,
+  NEW_TERMS_MODE,
+  assertValidNewTermsRule,
+  compileNewTermsToMonitor,
+  newTermsStateDocId,
+} from './new_terms';
+export type { NewTermsRuleDefinition } from './new_terms';
+// v1.2.3 W3b — the D6 indicator-match rule IR + hybrid compilers.
+export {
+  INDICATOR_MATCH_MODE,
+  assertValidIndicatorMatchRule,
+  buildInlineIndicatorQuery,
+  compileIndicatorInlineToDocMonitor,
+  compileIndicatorLookupToBucketMonitor,
+  pickIndicatorListMode,
+} from './indicator_match';
+export type { IndicatorMatchRuleDefinition, IndicatorListMode } from './indicator_match';

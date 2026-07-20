@@ -409,6 +409,16 @@ describe('assertValidPplRule', () => {
       assertValidPplRule({ ...VALID, runEvery: { value: 5, unit: 'MINUTES' } })
     ).not.toThrow();
   });
+
+  it('rejects non-member window/runEvery units BY NAME (W3 review fix-the-class)', () => {
+    expect(() =>
+      assertValidPplRule({ ...VALID, window: { value: 5, unit: 'FORTNIGHTS' as never } })
+    ).toThrow(/unknown time window unit "FORTNIGHTS"/);
+    // Without the membership check, windowMinutes NaNs and the R ≤ T guard silently passes.
+    expect(() =>
+      assertValidPplRule({ ...VALID, runEvery: { value: 1, unit: 'weeks' as never } })
+    ).toThrow(/unknown run-every unit "weeks"/);
+  });
 });
 
 describe('pplRuleToCompileInput + makeFieldResolver (the registry compile path)', () => {

@@ -6,6 +6,8 @@
 import { RuleDefinition, ThresholdRuleDefinition } from './types';
 import { PplRuleDefinition } from './ppl_rule';
 import { CustomQueryRuleDefinition } from './custom_query';
+import { NewTermsRuleDefinition } from './new_terms';
+import { IndicatorMatchRuleDefinition } from './indicator_match';
 import { DetectionMode, getType } from './registry';
 
 /**
@@ -48,7 +50,9 @@ export interface DetectionRuleAttributes {
     | RuleDefinition
     | ThresholdRuleDefinition
     | PplRuleDefinition
-    | CustomQueryRuleDefinition;
+    | CustomQueryRuleDefinition
+    | NewTermsRuleDefinition
+    | IndicatorMatchRuleDefinition;
   /**
    * For STATELESS rules on a patterned/dotted index only: a dot-free "display identity" alias name
    * derived from the rule's index PATTERN (`deriveAliasName(rule.index)`). Kept for backcompat with

@@ -8,6 +8,7 @@ import { registerExecuteDetectionRoute } from './detection';
 import { registerPplPreviewRoutes } from './ppl_preview';
 import { registerDetectionValidateRoutes } from './detection_validate';
 import { registerMonitorRoutes } from './monitors';
+import { registerValueListRoutes } from './value_lists';
 import { registerAlertRoutes } from './alerts';
 import { registerCaseRoutes } from './cases';
 import { registerUserRoutes } from './users';
@@ -38,6 +39,9 @@ export function registerDetectionRoutes(
   // execute route stay open to any authenticated user; the users route additionally gets
   // the savedObjects getter for the 5b.4a user-directory cache.
   registerMonitorRoutes(router, logger, auth);
+  // v1.2.3 D6: value-list CRUD — writes DETECTION_WRITERS-guarded like detections, reads open
+  // (the Threat Intel manager + the indicator-match editor's list picker).
+  registerValueListRoutes(router, logger, auth);
   registerAlertRoutes(router, logger, auth);
   registerUserRoutes(router, logger, getSavedObjects);
   registerCaseRoutes(router, logger, auth);

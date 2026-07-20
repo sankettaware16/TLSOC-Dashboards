@@ -521,6 +521,24 @@ describe('window invariant — buildWindow consumed VERBATIM', () => {
       compileAggregationRule(baseInput({ window: { value: 0, unit: 'MINUTES' } }))
     ).toThrow(/positive time window/i);
   });
+
+  it('rejects non-member window/runEvery units BY NAME (W3 review: the NaN-comparison bypass)', () => {
+    expect(() =>
+      compileAggregationRule(
+        baseInput({ window: { value: 5, unit: 'FORTNIGHTS' as never } })
+      )
+    ).toThrow(/unknown time window unit "FORTNIGHTS"/);
+    // A bad runEvery unit NaNs windowMinutes, and NaN > T is false — without the membership
+    // check the R ≤ T guard would silently pass a unit the engine cannot schedule.
+    expect(() =>
+      compileAggregationRule(
+        baseInput({
+          window: { value: 5, unit: 'MINUTES' },
+          runEvery: { value: 1, unit: 'weeks' as never },
+        })
+      )
+    ).toThrow(/unknown run-every unit "weeks"/);
+  });
 });
 
 describe('event filter — the three AggFilter shapes', () => {

@@ -98,6 +98,20 @@ export interface RuleEditorProps {
    */
   queryCheck?: QueryValidationState;
   onQueryValidate?: () => void;
+
+  /** v1.2.3 D5 (optional): new-terms editor state — only that editor consumes them. */
+  termField?: string;
+  onTermFieldChange?: (field: string) => void;
+  historyWindowValue?: number;
+  historyWindowUnit?: TimeWindow['unit'];
+  onHistoryWindowValueChange?: (value: number) => void;
+  onHistoryWindowUnitChange?: (unit: TimeWindow['unit']) => void;
+
+  /** v1.2.3 D6 (optional): the indicator-match rule's value-list id + event field (builder state). */
+  listId?: string;
+  onListIdChange?: (listId: string) => void;
+  eventField?: string;
+  onEventFieldChange?: (field: string) => void;
 }
 
 /** The server-side `_validate` verdict for the current custom query (BLOCKING-2 save gate). */
@@ -190,6 +204,44 @@ const pplUi: RuleTypeUiDefinition = {
   previewStrategy: 'ppl-preview',
 };
 
+/** v1.2.3 D5: first-seen detection — one alert per never-before-seen value of one field. */
+const newTermsUi: RuleTypeUiDefinition = {
+  id: 'new_terms',
+  card: {
+    label: 'New terms (first seen)',
+    description:
+      'Fire when a value of one field appears for the first time — never seen in the history ' +
+      'window (a new user, host, country…). One alert per new value; it resolves itself once ' +
+      'the value becomes known.',
+    icon: 'securitySignal',
+  },
+  editor: lazy(() =>
+    import('./editors/new_terms_editor').then((m) => ({ default: m.NewTermsEditor }))
+  ),
+  listBadge: { label: 'New terms', color: 'warning' },
+  previewStrategy: 'bucket-dryrun',
+};
+
+/** v1.2.3 D6: match event fields against threat-intel value lists (IOC lists). */
+const indicatorMatchUi: RuleTypeUiDefinition = {
+  id: 'indicator_match',
+  card: {
+    label: 'Indicator match (IOC)',
+    description:
+      'Fire when an event field matches a value in a threat-intel list (IPs/CIDRs, domains, ' +
+      'hashes). Small lists compile into the rule; large lists are looked up live each run.',
+    icon: 'globe',
+  },
+  editor: lazy(() =>
+    import('./editors/indicator_match_editor').then((m) => ({ default: m.IndicatorMatchEditor }))
+  ),
+  listBadge: { label: 'Indicator match', color: 'warning' },
+  // 'ppl-preview' = the builder renders NO shared test panel: the editor's mode callout is the
+  // honest v1 preview (the shared bucket-dryrun panel posts a hardcoded stateful body, and the
+  // doc fallback panel renders stateless copy — neither fits; generalizing onTest is a follow-up).
+  previewStrategy: 'ppl-preview',
+};
+
 /**
  * Registration order = card-grid order — mirrors the common registry's insertion order
  * (simplest first, Elastic-shaped). The builder's DEFAULT selection stays 'stateful' (its seed
@@ -200,6 +252,8 @@ const UI_REGISTRY: readonly RuleTypeUiDefinition[] = [
   statelessUi,
   statefulUi,
   pplUi,
+  newTermsUi,
+  indicatorMatchUi,
 ];
 
 /** All registered UI types, in registration (card-grid) order. */

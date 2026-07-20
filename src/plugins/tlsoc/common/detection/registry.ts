@@ -16,6 +16,16 @@ import {
   compileCustomQueryToMonitor,
   CustomQueryRuleDefinition,
 } from './custom_query';
+import {
+  NewTermsRuleDefinition,
+  assertValidNewTermsRule,
+  compileNewTermsToMonitor,
+} from './new_terms';
+import {
+  IndicatorMatchRuleDefinition,
+  assertValidIndicatorMatchRule,
+  compileIndicatorLookupToBucketMonitor,
+} from './indicator_match';
 
 /**
  * The rule-TYPE registry (v1.2.3 D1) — the ONE place a detection type's execution contract lives.
@@ -37,7 +47,13 @@ import {
  */
 
 /** The registered detection type ids — the single source of truth for the (persisted) mode union. */
-export type DetectionMode = 'stateful' | 'stateless' | 'ppl' | 'custom_query';
+export type DetectionMode =
+  | 'stateful'
+  | 'stateless'
+  | 'ppl'
+  | 'custom_query'
+  | 'new_terms'
+  | 'indicator_match';
 
 /**
  * What KIND of Alerting monitor a type compiles to. This — not the type id — is what the shared
@@ -112,16 +128,51 @@ const pplType: RuleTypeDefinition = {
     ) as unknown) as Record<string, unknown>,
 };
 
+/** v1.2.3 D5: first-seen detection — fire once per never-before-seen value of ONE field.
+ * The save route owns rule identity: it injects rule.stateDocId (newTermsStateDocId(soId,
+ * termField)) BEFORE compile; '' routes a missing id into compileNewTermsToMonitor's named
+ * throw (a 400 via prepareMonitor). NO toSigma — Sigma cannot express cross-run seen-state. */
+const newTermsType: RuleTypeDefinition = {
+  id: 'new_terms',
+  monitorKind: 'bucket',
+  validate: (rule) => assertValidNewTermsRule(rule as NewTermsRuleDefinition),
+  compile: (rule) => {
+    const newTermsRule = rule as NewTermsRuleDefinition;
+    return (compileNewTermsToMonitor(
+      newTermsRule,
+      newTermsRule.stateDocId ?? ''
+    ) as unknown) as Record<string, unknown>;
+  },
+};
+
+/** v1.2.3 D6: fire when an event field's value appears in a value list (IOC list).
+ * The rule is doc OR bucket per LIST SIZE (the D6 hybrid). The registry compile is the PURE leg —
+ * the lookup bucket monitor (values-free, correct at any size); the save route upgrades small
+ * lists to the inline doc-level shape (prepareIndicatorMatchRule in server/routes/value_lists.ts
+ * fetches the values a pure compile cannot). monitorKind 'bucket' matches this pure compile;
+ * the alias machinery keys off the COMPILED monitor_type (see prepareMonitor). NO toSigma. */
+const indicatorMatchType: RuleTypeDefinition = {
+  id: 'indicator_match',
+  monitorKind: 'bucket',
+  validate: (rule) => assertValidIndicatorMatchRule(rule as IndicatorMatchRuleDefinition),
+  compile: (rule) =>
+    (compileIndicatorLookupToBucketMonitor(
+      rule as IndicatorMatchRuleDefinition
+    ) as unknown) as Record<string, unknown>,
+};
+
 /**
  * Insertion order is presentation order (the UI card grid mirrors it), simplest first —
- * custom_query, stateless, stateful, ppl. The BUILDER's default selection stays 'stateful'
- * (its seed default), independent of card order.
+ * custom_query, stateless, stateful, ppl, new_terms, indicator_match. The BUILDER's default
+ * selection stays 'stateful' (its seed default), independent of card order.
  */
 const REGISTRY: Readonly<Record<DetectionMode, RuleTypeDefinition>> = {
   custom_query: customQueryType,
   stateless: statelessType,
   stateful: statefulType,
   ppl: pplType,
+  new_terms: newTermsType,
+  indicator_match: indicatorMatchType,
 };
 
 /** All registered types, in registration order. */

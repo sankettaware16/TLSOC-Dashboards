@@ -53,6 +53,33 @@ export function windowMinutes(window: TimeWindow): number {
   return window.value * MINUTES_PER_UNIT[window.unit];
 }
 
+/** Runtime mirror of the {@link TimeWindow} unit union, for reject-by-name validation. */
+const TIME_WINDOW_UNITS: ReadonlySet<string> = new Set(['MINUTES', 'HOURS', 'DAYS']);
+
+/**
+ * Reject a {@link TimeWindow} whose unit is outside the union, BY NAME (v1.2.3 W3 review, the
+ * fix-the-class sweep of new_terms.ts's original idiom). TypeScript's union only protects typed
+ * callers — a rule arriving over the API can carry any unit string, and a non-member unit
+ * compiles into a broken schedule/date-math expression the engine swallows silently (bucket
+ * monitors write NO alert on runtime failure — research_r2 §a), or NaNs out of
+ * {@link windowMinutes} so the R ≤ T comparison silently passes. EVERY validator that accepts a
+ * TimeWindow must call this for each window it takes; `ruleLabel` is the validator's own rule
+ * prefix (e.g. `Threshold rule "X"`) and `what` names the window (e.g. 'time window',
+ * 'run-every').
+ */
+export function assertValidTimeWindowUnit(
+  window: TimeWindow,
+  what: string,
+  ruleLabel: string
+): void {
+  if (!window || !TIME_WINDOW_UNITS.has(window.unit)) {
+    throw new Error(
+      `${ruleLabel} has an unknown ${what} unit "${String(window?.unit)}". ` +
+        'Supported: MINUTES, HOURS, DAYS.'
+    );
+  }
+}
+
 /** Validate a rule before compiling; throws an Error with a clear, user-facing message. */
 export function assertValidRule(rule: RuleDefinition): void {
   if (!rule || typeof rule.name !== 'string' || rule.name.trim() === '') {
@@ -67,8 +94,11 @@ export function assertValidRule(rule: RuleDefinition): void {
   rule.group.conditions.forEach((condition, index) =>
     assertValidCondition(condition, index, rule.name)
   );
-  if (rule.runEvery && !(rule.runEvery.value > 0 && Number.isInteger(rule.runEvery.value))) {
-    throw new Error(`Detection rule "${rule.name}" must have a positive run-every value.`);
+  if (rule.runEvery) {
+    if (!(rule.runEvery.value > 0 && Number.isInteger(rule.runEvery.value))) {
+      throw new Error(`Detection rule "${rule.name}" must have a positive run-every value.`);
+    }
+    assertValidTimeWindowUnit(rule.runEvery, 'run-every', `Detection rule "${rule.name}"`);
   }
 }
 
@@ -130,6 +160,7 @@ export function assertValidThresholdRule(rule: ThresholdRuleDefinition): void {
   if (!rule.window || !(rule.window.value > 0)) {
     throw new Error(`Threshold rule "${rule.name}" must have a positive time window.`);
   }
+  assertValidTimeWindowUnit(rule.window, 'time window', `Threshold rule "${rule.name}"`);
   if (!rule.threshold || !Number.isInteger(rule.threshold.value) || rule.threshold.value < 0) {
     throw new Error(`Threshold rule "${rule.name}" must have a non-negative integer threshold.`);
   }
@@ -137,6 +168,9 @@ export function assertValidThresholdRule(rule: ThresholdRuleDefinition): void {
     if (!(rule.runEvery.value > 0 && Number.isInteger(rule.runEvery.value))) {
       throw new Error(`Threshold rule "${rule.name}" must have a positive run-every value.`);
     }
+    // Unit membership BEFORE the R ≤ T comparison — windowMinutes NaNs on a bad unit, and
+    // NaN > x is false, so the comparison alone would silently accept it.
+    assertValidTimeWindowUnit(rule.runEvery, 'run-every', `Threshold rule "${rule.name}"`);
     if (windowMinutes(rule.runEvery) > windowMinutes(rule.window)) {
       throw new Error(
         `Threshold rule "${rule.name}": run-every must not exceed the threshold window — a longer ` +

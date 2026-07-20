@@ -157,6 +157,21 @@ describe('assertValidThresholdRule — run-every guards (via compile, WS-20)', (
       compileToBucketLevelMonitor(baseRule({ runEvery: { value: -5, unit: 'MINUTES' } }))
     ).toThrow(/positive run-every value/);
   });
+
+  it('non-member window/runEvery units throw BY NAME (W3 review fix-the-class)', () => {
+    expect(() =>
+      compileToBucketLevelMonitor(baseRule({ window: { value: 5, unit: 'FORTNIGHTS' as never } }))
+    ).toThrow(/unknown time window unit "FORTNIGHTS"/);
+    // Without the membership check, windowMinutes NaNs and the R ≤ T guard silently passes.
+    expect(() =>
+      compileToBucketLevelMonitor(
+        baseRule({
+          window: { value: 5, unit: 'MINUTES' },
+          runEvery: { value: 1, unit: 'weeks' as never },
+        })
+      )
+    ).toThrow(/unknown run-every unit "weeks"/);
+  });
 });
 
 describe('assertValidThresholdRule — guards (via compile)', () => {

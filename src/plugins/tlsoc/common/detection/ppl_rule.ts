@@ -10,7 +10,7 @@ import {
   MetricDef,
   MetricFn,
 } from './agg_types';
-import { windowMinutes } from './internal';
+import { assertValidTimeWindowUnit, windowMinutes } from './internal';
 import { RuleMetadataFields, Severity, TimeWindow } from './types';
 import { MetricAgg, parsePpl, PplHavingExpr, PplRuleAst, WhereExpr } from './ppl_parse';
 
@@ -152,10 +152,14 @@ export function assertValidPplRule(rule: PplRuleDefinition): void {
   if (!rule.window || !(rule.window.value > 0)) {
     throw new Error(`PPL rule "${rule.name}" must have a positive time window.`);
   }
+  assertValidTimeWindowUnit(rule.window, 'time window', `PPL rule "${rule.name}"`);
   if (rule.runEvery) {
     if (!(rule.runEvery.value > 0 && Number.isInteger(rule.runEvery.value))) {
       throw new Error(`PPL rule "${rule.name}" must have a positive run-every value.`);
     }
+    // Unit membership BEFORE the R ≤ T comparison — windowMinutes NaNs on a bad unit, and
+    // NaN > x is false, so the comparison alone would silently accept it.
+    assertValidTimeWindowUnit(rule.runEvery, 'run-every', `PPL rule "${rule.name}"`);
     if (windowMinutes(rule.runEvery) > windowMinutes(rule.window)) {
       throw new Error(
         `PPL rule "${rule.name}": run-every must not exceed the rule window — a longer cadence ` +

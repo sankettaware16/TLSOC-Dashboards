@@ -10,6 +10,7 @@ import {
   RESERVED_COUNT_ALIAS,
   SEVERITY_TO_MONITOR_SEVERITY,
   assertValidThresholdRule,
+  assertValidTimeWindowUnit,
   compositeSourceName,
   validateAggregationSpec,
   windowMinutes,
@@ -117,10 +118,14 @@ export function validateAggregationInput(input: AggregationCompileInput): void {
   if (!input.window || !(input.window.value > 0)) {
     throw new Error(`Aggregation rule "${input.name}" must have a positive time window.`);
   }
+  assertValidTimeWindowUnit(input.window, 'time window', `Aggregation rule "${input.name}"`);
   if (input.runEvery) {
     if (!(input.runEvery.value > 0 && Number.isInteger(input.runEvery.value))) {
       throw new Error(`Aggregation rule "${input.name}" must have a positive run-every value.`);
     }
+    // Unit membership BEFORE the R ≤ T comparison — windowMinutes NaNs on a bad unit, and
+    // NaN > x is false, so the comparison alone would silently accept it.
+    assertValidTimeWindowUnit(input.runEvery, 'run-every', `Aggregation rule "${input.name}"`);
     if (windowMinutes(input.runEvery) > windowMinutes(input.window)) {
       throw new Error(
         `Aggregation rule "${input.name}": run-every must not exceed the window — a longer ` +
