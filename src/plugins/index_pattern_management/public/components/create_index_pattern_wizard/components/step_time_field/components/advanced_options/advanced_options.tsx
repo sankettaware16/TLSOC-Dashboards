@@ -78,13 +78,13 @@ export const AdvancedOptions: React.FC<AdvancedOptionsProps> = ({
           label={
             <FormattedMessage
               id="indexPatternManagement.createIndexPattern.stepTime.options.patternHeader"
-              defaultMessage="Custom index pattern ID"
+              defaultMessage="Custom data view ID"
             />
           }
           helpText={
             <FormattedMessage
               id="indexPatternManagement.createIndexPattern.stepTime.options.patternLabel"
-              defaultMessage="OpenSearch Dashboards will provide a unique identifier for each index pattern. If you do not want to use this unique ID,
+              defaultMessage="TLSOC will provide a unique identifier for each data view. If you do not want to use this unique ID,
             enter a custom one."
             />
           }
@@ -97,7 +97,7 @@ export const AdvancedOptions: React.FC<AdvancedOptionsProps> = ({
             placeholder={i18n.translate(
               'indexPatternManagement.createIndexPattern.stepTime.options.patternPlaceholder',
               {
-                defaultMessage: 'custom-index-pattern-id',
+                defaultMessage: 'custom-data-view-id',
               }
             )}
           />

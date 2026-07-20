@@ -203,7 +203,7 @@ exports[`Relationships from legacy app should render index patterns normally 1`]
     <div>
       <EuiCallOut>
         <p>
-          Here are the saved objects related to MyIndexPattern*. Deleting this index-pattern affects its parent objects, but not its children.
+          Here are the saved objects related to MyIndexPattern*. Deleting this data view affects its parent objects, but not its children.
         </p>
       </EuiCallOut>
       <EuiSpacer />
@@ -467,9 +467,9 @@ exports[`Relationships from legacy app should render searches normally 1`] = `
                 "name": "Type",
                 "options": Array [
                   Object {
-                    "name": "index-pattern",
+                    "name": "data view",
                     "value": "index-pattern",
-                    "view": "index-pattern",
+                    "view": "data view",
                   },
                   Object {
                     "name": "visualization",
@@ -974,7 +974,7 @@ exports[`Relationships should render index patterns normally 1`] = `
     <div>
       <EuiCallOut>
         <p>
-          Here are the saved objects related to MyIndexPattern*. Deleting this index-pattern affects its parent objects, but not its children.
+          Here are the saved objects related to MyIndexPattern*. Deleting this data view affects its parent objects, but not its children.
         </p>
       </EuiCallOut>
       <EuiSpacer />
@@ -1238,9 +1238,9 @@ exports[`Relationships should render searches normally 1`] = `
                 "name": "Type",
                 "options": Array [
                   Object {
-                    "name": "index-pattern",
+                    "name": "data view",
                     "value": "index-pattern",
-                    "view": "index-pattern",
+                    "view": "data view",
                   },
                   Object {
                     "name": "visualization",

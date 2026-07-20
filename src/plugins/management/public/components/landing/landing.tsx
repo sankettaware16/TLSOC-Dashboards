@@ -60,7 +60,7 @@ export const ManagementLandingPage = ({ setBreadcrumbs }: ManagementLandingPageP
           <EuiText size="s">
             <FormattedMessage
               id="management.landing.subhead"
-              defaultMessage="Manage your index patterns, saved objects, TLSOC settings, and more."
+              defaultMessage="Manage your data views, saved objects, TLSOC settings, and more."
             />
           </EuiText>
         </div>

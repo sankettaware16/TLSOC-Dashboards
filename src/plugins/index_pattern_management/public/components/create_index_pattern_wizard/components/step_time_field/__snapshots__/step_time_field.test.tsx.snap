@@ -16,7 +16,7 @@ exports[`StepTimeField should enable the action button if the user decides to no
 />
 `;
 
-exports[`StepTimeField should render "Custom index pattern ID already exists" when error is "Conflict" 1`] = `
+exports[`StepTimeField should render "Custom data view ID already exists" when error is "Conflict" 1`] = `
 <Fragment>
   <Header
     indexPattern="ki*"
@@ -55,7 +55,7 @@ exports[`StepTimeField should render "Custom index pattern ID already exists" wh
   >
     <p>
       <FormattedMessage
-        defaultMessage="Custom index pattern ID already exists."
+        defaultMessage="Custom data view ID already exists."
         id="indexPatternManagement.createIndexPattern.stepTime.patterAlreadyExists"
         values={Object {}}
       />
@@ -72,7 +72,7 @@ exports[`StepTimeField should render "Custom index pattern ID already exists" wh
 </Fragment>
 `;
 
-exports[`StepTimeField should render a loading state when creating the index pattern 1`] = `
+exports[`StepTimeField should render a loading state when creating the data view 1`] = `
 <EuiFlexGroup
   alignItems="center"
   direction="column"
@@ -89,7 +89,7 @@ exports[`StepTimeField should render a loading state when creating the index pat
         className="eui-textCenter"
       >
         <FormattedMessage
-          defaultMessage="Creating index pattern…"
+          defaultMessage="Creating data view…"
           id="indexPatternManagement.createIndexPattern.stepTime.creatingLabel"
           values={Object {}}
         />

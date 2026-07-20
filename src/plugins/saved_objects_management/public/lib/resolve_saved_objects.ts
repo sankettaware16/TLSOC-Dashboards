@@ -68,7 +68,7 @@ function addJsonFieldToIndexPattern(
       throw new Error(
         i18n.translate('savedObjectsManagement.parsingFieldErrorMessage', {
           defaultMessage:
-            'Error encountered parsing {fieldName} for index pattern {indexName}: {errorMessage}',
+            'Error encountered parsing {fieldName} for data view {indexName}: {errorMessage}',
           values: {
             fieldName,
             indexName,

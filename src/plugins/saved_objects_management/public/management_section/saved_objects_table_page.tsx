@@ -90,7 +90,7 @@ const SavedObjectsTablePage = ({
             }
           : {
               text: i18n.translate('savedObjectsManagement.updatedUX.title', {
-                defaultMessage: 'Assets',
+                defaultMessage: 'Workspace assets',
               }),
             }
         : {

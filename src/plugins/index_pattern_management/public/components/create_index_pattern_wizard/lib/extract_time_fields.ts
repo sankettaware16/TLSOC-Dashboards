@@ -36,7 +36,7 @@ export function extractTimeFields(fields: IFieldType[]) {
   const label = i18n.translate(
     'indexPatternManagement.createIndexPattern.stepTime.noTimeFieldsLabel',
     {
-      defaultMessage: "The indices which match this index pattern don't contain any time fields.",
+      defaultMessage: "The indices which match this data view don't contain any time fields.",
     }
   );
 

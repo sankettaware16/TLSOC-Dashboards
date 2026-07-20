@@ -369,7 +369,7 @@ export class IndexPatternsService {
 
       this.onError(err, {
         title: i18n.translate('data.indexPatterns.fetchFieldErrorTitle', {
-          defaultMessage: 'Error fetching fields for index pattern {title} (ID: {id})',
+          defaultMessage: 'Error fetching fields for data view {title} (ID: {id})',
           values: { id: indexPattern.id, title: indexPattern.title },
         }),
       });
@@ -524,7 +524,7 @@ export class IndexPatternsService {
   getByTitle = (title: string, ignoreErrors: boolean = false): IndexPattern => {
     const indexPattern = indexPatternCache.getByTitle(title);
     if (!indexPattern && !ignoreErrors) {
-      throw new MissingIndexPatternError(`Missing index pattern: ${title}`);
+      throw new MissingIndexPatternError(`Missing data view: ${title}`);
     }
     return indexPattern;
   };
@@ -617,7 +617,7 @@ export class IndexPatternsService {
       if (override) {
         await this.delete(dupe.id);
       } else {
-        throw new DuplicateIndexPatternError(`Duplicate index pattern: ${indexPattern.title}`);
+        throw new DuplicateIndexPatternError(`Duplicate data view: ${indexPattern.title}`);
       }
     }
 
@@ -698,7 +698,7 @@ export class IndexPatternsService {
             }
             const title = i18n.translate('data.indexPatterns.unableWriteLabel', {
               defaultMessage:
-                'Unable to write index pattern! Refresh the page to get the most up to date changes for this index pattern.',
+                'Unable to write data view! Refresh the page to get the most up to date changes for this data view.',
             });
 
             this.onNotification({ title, color: 'danger' });

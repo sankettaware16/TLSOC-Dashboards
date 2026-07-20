@@ -250,7 +250,7 @@ describe('StepTimeField', () => {
     expect(component).toMatchSnapshot();
   });
 
-  it('should render a loading state when creating the index pattern', () => {
+  it('should render a loading state when creating the data view', () => {
     const component = createComponentWithContext(
       StepTimeField,
       {
@@ -284,7 +284,7 @@ describe('StepTimeField', () => {
     expect(component).toMatchSnapshot();
   });
 
-  it('should render "Custom index pattern ID already exists" when error is "Conflict"', () => {
+  it('should render "Custom data view ID already exists" when error is "Conflict"', () => {
     const component = createComponentWithContext(
       StepTimeField,
       {

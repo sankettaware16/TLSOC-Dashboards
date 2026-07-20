@@ -68,7 +68,7 @@ export const StatusMessage: React.FC<StatusMessageProps> = ({
         <span>
           <FormattedMessage
             id="indexPatternManagement.createIndexPattern.step.status.matchAnyLabel.matchAnyDetail"
-            defaultMessage="Your index pattern can match {sourceCount, plural,
+            defaultMessage="Your data view can match {sourceCount, plural,
               one {your # source}
               other {any of your # sources}
             }."
@@ -103,7 +103,7 @@ export const StatusMessage: React.FC<StatusMessageProps> = ({
         &nbsp;
         <FormattedMessage
           id="indexPatternManagement.createIndexPattern.step.status.successLabel.successDetail"
-          defaultMessage="Your index pattern matches {sourceCount} {sourceCount, plural,
+          defaultMessage="Your data view matches {sourceCount} {sourceCount, plural,
             one {source}
             other {sources}
           }."
@@ -120,7 +120,7 @@ export const StatusMessage: React.FC<StatusMessageProps> = ({
       <span>
         <FormattedMessage
           id="indexPatternManagement.createIndexPattern.step.status.partialMatchLabel.partialMatchDetail"
-          defaultMessage="Your index pattern doesn't match any indices, but you have {strongIndices} which
+          defaultMessage="Your data view doesn't match any indices, but you have {strongIndices} which
           {matchedIndicesLength, plural,
             one {looks}
             other {look}
@@ -150,7 +150,7 @@ export const StatusMessage: React.FC<StatusMessageProps> = ({
       <span>
         <FormattedMessage
           id="indexPatternManagement.createIndexPattern.step.status.notMatchLabel.notMatchDetail"
-          defaultMessage="The index pattern you've entered doesn't match any indices.
+          defaultMessage="The pattern you've entered doesn't match any indices.
           You can match {indicesLength, plural,
             one {your}
             other {any of your}

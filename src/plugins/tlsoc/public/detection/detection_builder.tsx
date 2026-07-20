@@ -445,7 +445,7 @@ export function DetectionBuilder({
               <h2>Data source</h2>
             </EuiTitle>
             <EuiSpacer size="s" />
-            <EuiFormRow label="Data view" helpText="The index pattern this rule runs against.">
+            <EuiFormRow label="Data view" helpText="The data view this rule runs against.">
               <EuiSelect
                 options={[
                   { value: '', text: loadingViews ? 'Loading data views…' : 'Select a data view' },

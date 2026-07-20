@@ -239,7 +239,7 @@ export const IndexPatternTable = ({ canSave, history }: Props) => {
       <CreateButton options={creationOptions}>
         <FormattedMessage
           id="indexPatternManagement.indexPatternTable.createBtn"
-          defaultMessage="Create index pattern"
+          defaultMessage="Create data view"
         />
       </CreateButton>
     );
@@ -259,7 +259,7 @@ export const IndexPatternTable = ({ canSave, history }: Props) => {
         'indexPatternManagement.indexPatternTable.indexPatternExplanationWithWorkspace',
         {
           defaultMessage:
-            'Create and manage the index patterns that help you retrieve your data from OpenSearch for {name} workspace.',
+            'Create and manage the data views that help you retrieve your data from OpenSearch for {name} workspace.',
           values: {
             name: currentWorkspace.name,
           },
@@ -267,7 +267,7 @@ export const IndexPatternTable = ({ canSave, history }: Props) => {
       )
     : i18n.translate('indexPatternManagement.indexPatternTable.indexPatternExplanation', {
         defaultMessage:
-          'Create and manage the index patterns that help you retrieve your data from OpenSearch.',
+          'Create and manage the data views that help you retrieve your data from OpenSearch.',
       });
   const pageTitleAndDescription = useUpdatedUX ? (
     <HeaderControl

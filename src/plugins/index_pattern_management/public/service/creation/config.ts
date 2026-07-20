@@ -33,12 +33,12 @@ import { MatchedItem } from '../../components/create_index_pattern_wizard/types'
 
 const indexPatternTypeName = i18n.translate(
   'indexPatternManagement.editIndexPattern.createIndex.defaultTypeName',
-  { defaultMessage: 'index pattern' }
+  { defaultMessage: 'data view' }
 );
 
 const indexPatternButtonText = i18n.translate(
   'indexPatternManagement.editIndexPattern.createIndex.defaultButtonText',
-  { defaultMessage: 'Standard index pattern' }
+  { defaultMessage: 'Standard data view' }
 );
 
 const indexPatternButtonDescription = i18n.translate(

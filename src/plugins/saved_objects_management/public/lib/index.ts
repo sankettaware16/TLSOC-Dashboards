@@ -33,7 +33,10 @@ export { fetchExportObjects } from './fetch_export_objects';
 export { canViewInApp } from './in_app_url';
 export { getRelationships } from './get_relationships';
 export { getSavedObjectCounts, SavedObjectCountOptions } from './get_saved_object_counts';
-export { getSavedObjectLabel } from './get_saved_object_label';
+export {
+  getSavedObjectLabel,
+  getSavedObjectTypeDisplayName,
+} from './get_saved_object_label';
 export { importFile } from './import_file';
 export { importLegacyFile } from './import_legacy_file';
 export { parseQuery } from './parse_query';

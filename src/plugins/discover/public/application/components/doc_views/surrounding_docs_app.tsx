@@ -60,11 +60,11 @@ export function SurroundingDocsApp() {
   }, [id, chrome, baseUrl]);
 
   if (error) {
-    return <div>Error fetching index pattern: {error.message}</div>;
+    return <div>Error fetching data view: {error.message}</div>;
   }
 
   if (!indexPattern) {
-    return <div>Index pattern loading</div>;
+    return <div>Data view loading</div>;
   }
   return <SurroundingDocsView id={id} indexPattern={indexPattern} />;
 }

@@ -147,7 +147,7 @@ exports[`EmptyState should render normally 1`] = `
             onClick={[Function]}
           >
             <FormattedMessage
-              defaultMessage="create an index pattern"
+              defaultMessage="create a data view"
               id="indexPatternManagement.createIndexPattern.emptyState.createAnywayLink"
               values={Object {}}
             />

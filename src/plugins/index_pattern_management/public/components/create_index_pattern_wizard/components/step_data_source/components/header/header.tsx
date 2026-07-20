@@ -178,7 +178,7 @@ export const Header: React.FC<HeaderProps> = (props: HeaderProps) => {
         <EuiText>
           <FormattedMessage
             id="indexPatternManagement.createIndexPattern.stepDataSourceLabel"
-            defaultMessage="Pick a data source within which to configure index patterns."
+            defaultMessage="Pick a data source within which to configure data views."
           />
         </EuiText>
         {!hideLocalCluster && (

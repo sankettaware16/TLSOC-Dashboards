@@ -53,7 +53,7 @@ export const onRedirectNoIndexPattern = (
 
   const bannerMessage = i18n.translate('data.indexPatterns.ensureDefaultIndexPattern.bannerLabel', {
     defaultMessage:
-      'To visualize and explore data in TLSOC, you must create an index pattern to retrieve data from OpenSearch.',
+      'To visualize and explore data in TLSOC, you must create a data view to retrieve data from OpenSearch.',
   });
 
   // Avoid being hostile to new users who don't have an index pattern setup yet

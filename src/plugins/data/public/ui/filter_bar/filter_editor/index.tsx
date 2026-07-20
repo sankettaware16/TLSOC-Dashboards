@@ -246,13 +246,13 @@ class FilterEditorUI extends Component<Props, State> {
           <EuiCompressedFormRow
             label={this.props.intl.formatMessage({
               id: 'data.filter.filterEditor.indexPatternSelectLabel',
-              defaultMessage: 'Index Pattern',
+              defaultMessage: 'Data view',
             })}
           >
             <IndexPatternComboBox
               placeholder={this.props.intl.formatMessage({
                 id: 'data.filter.filterBar.indexPatternSelectPlaceholder',
-                defaultMessage: 'Select an index pattern',
+                defaultMessage: 'Select a data view',
               })}
               options={this.props.indexPatterns}
               selectedOptions={selectedIndexPattern ? [selectedIndexPattern] : []}

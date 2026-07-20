@@ -183,7 +183,7 @@ export class StepTimeField extends Component<StepTimeFieldProps, StepTimeFieldSt
     return message === 'Conflict' ? (
       <FormattedMessage
         id="indexPatternManagement.createIndexPattern.stepTime.patterAlreadyExists"
-        defaultMessage="Custom index pattern ID already exists."
+        defaultMessage="Custom data view ID already exists."
       />
     ) : (
       message
@@ -210,7 +210,7 @@ export class StepTimeField extends Component<StepTimeFieldProps, StepTimeFieldSt
               <h3 className="eui-textCenter">
                 <FormattedMessage
                   id="indexPatternManagement.createIndexPattern.stepTime.creatingLabel"
-                  defaultMessage="Creating index pattern…"
+                  defaultMessage="Creating data view…"
                 />
               </h3>
             </EuiTitle>

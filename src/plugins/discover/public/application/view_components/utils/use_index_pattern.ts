@@ -104,7 +104,7 @@ export const useIndexPattern = (services: DiscoverViewServices) => {
     } catch (error) {
       if (isMounted) {
         const warningMessage = i18n.translate('discover.indexPatternFetchErrorWarning', {
-          defaultMessage: 'Error fetching index pattern: {error}',
+          defaultMessage: 'Error fetching data view: {error}',
           values: { error: (error as Error).message },
         });
         toastNotifications.addWarning(warningMessage);

@@ -9,6 +9,7 @@ import { render, fireEvent, screen, waitFor } from '@testing-library/react';
 import { I18nProvider } from '@osd/i18n/react';
 import { coreMock } from '../../../../../core/public/mocks';
 import { navigateToAppWithinWorkspace } from '../utils/workspace';
+import { getDataSourcesList } from '../../utils';
 import { createMockedRegisteredUseCases$ } from '../../mocks';
 import { OpenSearchDashboardsContextProvider } from '../../../../../plugins/opensearch_dashboards_react/public';
 import { WorkspaceList } from './index';
@@ -100,7 +101,8 @@ function getWrapWorkspaceListInContext(
       lastUpdatedTime: '1999-08-06T01:00:00.00Z',
     },
   ],
-  isDashboardAdmin = true
+  isDashboardAdmin = true,
+  dataSourceManagement?: object
 ) {
   const coreStartMock = coreMock.createStart();
   coreStartMock.application.capabilities = {
@@ -131,6 +133,7 @@ function getWrapWorkspaceListInContext(
     navigationUI: {
       HeaderControl: mockHeaderControl,
     },
+    dataSourceManagement,
   };
 
   return (
@@ -331,12 +334,21 @@ describe('WorkspaceList', () => {
     expect(screen.queryByLabelText('mock delete workspace modal')).not.toBeInTheDocument();
   });
 
-  it('should render data source badge when more than two data sources', async () => {
-    const { getByTestId } = render(getWrapWorkspaceListInContext());
+  it('should render data source badge when more than two data sources and data source is enabled', async () => {
+    const { getByTestId, getAllByText } = render(
+      getWrapWorkspaceListInContext(undefined, true, { ui: {} })
+    );
+    expect(getAllByText('Data sources').length).toBeGreaterThan(0);
     await waitFor(() => {
       const badge = getByTestId('workspaceList-more-id1-badge');
       expect(badge).toBeInTheDocument();
       expect(badge.closest('a')).toHaveAttribute('href', 'http://localhost/w/id1/dataSources');
     });
+  });
+
+  it('should hide the data sources column and skip the data sources fetch when data source is disabled', async () => {
+    const { queryAllByText } = render(getWrapWorkspaceListInContext());
+    expect(queryAllByText('Data sources')).toHaveLength(0);
+    expect(getDataSourcesList).not.toHaveBeenCalled();
   });
 });

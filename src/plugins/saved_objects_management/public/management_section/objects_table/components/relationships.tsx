@@ -46,7 +46,11 @@ import { SearchFilterConfig } from '@elastic/eui';
 import { i18n } from '@osd/i18n';
 import { FormattedMessage } from '@osd/i18n/react';
 import { IBasePath } from 'src/core/public';
-import { getDefaultTitle, getSavedObjectLabel } from '../../../lib';
+import {
+  getDefaultTitle,
+  getSavedObjectLabel,
+  getSavedObjectTypeDisplayName,
+} from '../../../lib';
 import { SavedObjectWithMetadata, SavedObjectRelation } from '../../../types';
 
 export interface RelationshipsProps {
@@ -254,8 +258,8 @@ export class Relationships extends Component<RelationshipsProps, RelationshipsSt
         relationship.type,
         {
           value: relationship.type,
-          name: relationship.type,
-          view: relationship.type,
+          name: getSavedObjectTypeDisplayName(relationship.type),
+          view: getSavedObjectTypeDisplayName(relationship.type),
         },
       ])
     );
@@ -313,7 +317,7 @@ export class Relationships extends Component<RelationshipsProps, RelationshipsSt
                   'Here are the saved objects related to {title}. ' +
                   'Deleting this {type} affects its parent objects, but not its children.',
                 values: {
-                  type: savedObject.type,
+                  type: getSavedObjectTypeDisplayName(savedObject.type),
                   title: savedObject.meta.title || getDefaultTitle(savedObject),
                 },
               }

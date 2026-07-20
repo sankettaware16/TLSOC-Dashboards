@@ -371,7 +371,7 @@ export class StepIndexPattern extends Component<StepIndexPatternProps, StepIndex
         title={
           <FormattedMessage
             id="indexPatternManagement.createIndexPattern.step.warningHeader"
-            defaultMessage="There's already an index pattern called {query}"
+            defaultMessage="There's already a data view called {query}"
             values={{ query }}
           />
         }

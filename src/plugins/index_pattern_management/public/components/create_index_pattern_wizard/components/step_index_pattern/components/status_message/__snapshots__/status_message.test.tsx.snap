@@ -10,7 +10,7 @@ exports[`StatusMessage should render with exact matches 1`] = `
     <span>
        
       <FormattedMessage
-        defaultMessage="Your index pattern matches {sourceCount} {sourceCount, plural, one {source} other {sources} }."
+        defaultMessage="Your data view matches {sourceCount} {sourceCount, plural, one {source} other {sources} }."
         id="indexPatternManagement.createIndexPattern.step.status.successLabel.successDetail"
         values={
           Object {
@@ -31,7 +31,7 @@ exports[`StatusMessage should render with no partial matches 1`] = `
   title={
     <span>
       <FormattedMessage
-        defaultMessage="The index pattern you've entered doesn't match any indices. You can match {indicesLength, plural, one {your} other {any of your} } {strongIndices}, below."
+        defaultMessage="The pattern you've entered doesn't match any indices. You can match {indicesLength, plural, one {your} other {any of your} } {strongIndices}, below."
         id="indexPatternManagement.createIndexPattern.step.status.notMatchLabel.notMatchDetail"
         values={
           Object {
@@ -63,7 +63,7 @@ exports[`StatusMessage should render with partial matches 1`] = `
   title={
     <span>
       <FormattedMessage
-        defaultMessage="Your index pattern doesn't match any indices, but you have {strongIndices} which {matchedIndicesLength, plural, one {looks} other {look} } similar."
+        defaultMessage="Your data view doesn't match any indices, but you have {strongIndices} which {matchedIndicesLength, plural, one {looks} other {look} } similar."
         id="indexPatternManagement.createIndexPattern.step.status.partialMatchLabel.partialMatchDetail"
         values={
           Object {
@@ -95,7 +95,7 @@ exports[`StatusMessage should render without a query 1`] = `
   title={
     <span>
       <FormattedMessage
-        defaultMessage="Your index pattern can match {sourceCount, plural, one {your # source} other {any of your # sources} }."
+        defaultMessage="Your data view can match {sourceCount, plural, one {your # source} other {any of your # sources} }."
         id="indexPatternManagement.createIndexPattern.step.status.matchAnyLabel.matchAnyDetail"
         values={
           Object {

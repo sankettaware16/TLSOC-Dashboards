@@ -84,7 +84,7 @@ export function resolveIndexPattern(
 
   if (stateVal && !stateValFound) {
     const warningTitle = i18n.translate('discover.valueIsNotConfiguredIndexPatternIDWarningTitle', {
-      defaultMessage: '{id} is not a configured index pattern ID',
+      defaultMessage: '{id} is not a configured data view ID',
       values: {
         id: `"${stateVal}"`,
       },
@@ -95,7 +95,7 @@ export function resolveIndexPattern(
         title: warningTitle,
         text: i18n.translate('discover.showingSavedIndexPatternWarningDescription', {
           defaultMessage:
-            'Showing the saved index pattern: "{ownIndexPatternTitle}" ({ownIndexPatternId})',
+            'Showing the saved data view: "{ownIndexPatternTitle}" ({ownIndexPatternId})',
           values: {
             ownIndexPatternTitle: ownIndexPattern.title,
             ownIndexPatternId: ownIndexPattern.id,
@@ -109,7 +109,7 @@ export function resolveIndexPattern(
       title: warningTitle,
       text: i18n.translate('discover.showingDefaultIndexPatternWarningDescription', {
         defaultMessage:
-          'Showing the default index pattern: "{loadedIndexPatternTitle}" ({loadedIndexPatternId})',
+          'Showing the default data view: "{loadedIndexPatternTitle}" ({loadedIndexPatternId})',
         values: {
           loadedIndexPatternTitle: loadedIndexPattern.title,
           loadedIndexPatternId: loadedIndexPattern.id,

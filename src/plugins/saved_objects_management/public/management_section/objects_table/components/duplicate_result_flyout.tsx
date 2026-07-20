@@ -104,7 +104,7 @@ export class DuplicateResultFlyout extends React.Component<DuplicateResultFlyout
       title={
         <FormattedMessage
           id="savedObjectsManagement.objectsTable.copyResult.indexPatternConflictsTitle"
-          defaultMessage="Index Pattern Conflicts"
+          defaultMessage="Data view conflicts"
         />
       }
       color="danger"
@@ -113,9 +113,9 @@ export class DuplicateResultFlyout extends React.Component<DuplicateResultFlyout
       <p>
         <FormattedMessage
           id="savedObjectsManagement.objectsTable.copyResult.indexPatternConflictsDescription"
-          defaultMessage="The following {useUpdatedUX, select, true {assets} other {saved objects}} use index patterns that do not exist.
-              Please select the index patterns you'd like re-associated with
-              them. You can create a new index pattern if necessary."
+          defaultMessage="The following {useUpdatedUX, select, true {assets} other {saved objects}} use data views that do not exist.
+              Please select the data views you'd like re-associated with
+              them. You can create a new data view if necessary."
           values={{
             useUpdatedUX: this.props.useUpdatedUX,
           }}

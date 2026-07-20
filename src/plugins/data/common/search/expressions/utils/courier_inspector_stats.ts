@@ -48,16 +48,16 @@ export function getRequestInspectorStats(searchSource: ISearchSource) {
   if (index) {
     stats.indexPattern = {
       label: i18n.translate('data.search.searchSource.indexPatternLabel', {
-        defaultMessage: 'Index pattern',
+        defaultMessage: 'Data view',
       }),
       value: index.title,
       description: i18n.translate('data.search.searchSource.indexPatternDescription', {
-        defaultMessage: 'The index pattern that connected to the OpenSearch indices.',
+        defaultMessage: 'The data view that connects to the OpenSearch indices.',
       }),
     };
     stats.indexPatternId = {
       label: i18n.translate('data.search.searchSource.indexPatternIdLabel', {
-        defaultMessage: 'Index pattern ID',
+        defaultMessage: 'Data view ID',
       }),
       value: index.id!,
       description: i18n.translate('data.search.searchSource.indexPatternIdDescription', {

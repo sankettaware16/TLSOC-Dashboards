@@ -150,7 +150,7 @@ export class IndexPatternManagementPlugin
       id: IPM_APP_ID,
       title: sectionsHeader,
       description: i18n.translate('indexPatternManagement.indexPattern.description', {
-        defaultMessage: 'Manage index patterns to retrieve data from OpenSearch.',
+        defaultMessage: 'Manage data views to retrieve data from OpenSearch.',
       }),
       status: core.chrome.navGroup.getNavGroupEnabled()
         ? AppStatus.accessible
@@ -178,7 +178,7 @@ export class IndexPatternManagementPlugin
             const [coreStart] = await core.getStartServices();
             coreStart.notifications.toasts.addDanger({
               title: i18n.translate('indexPatternManagement.mountError.title', {
-                defaultMessage: 'Failed to mount Index Pattern Management',
+                defaultMessage: 'Failed to mount Data views',
               }),
               text: error.message,
             });

@@ -48,7 +48,7 @@ export function getDetails(
     return {
       ...defaultDetails,
       error: i18n.translate('discover.fieldChooser.noIndexPatternSelectedErrorMessage', {
-        defaultMessage: 'Index pattern not specified.',
+        defaultMessage: 'Data view not specified.',
       }),
     };
   }

@@ -37,7 +37,7 @@ import { OsdError } from '../../../../opensearch_dashboards_utils/common/';
  */
 export class IndexPatternMissingIndices extends OsdError {
   constructor(message: string) {
-    const defaultMessage = "IndexPattern's configured pattern does not match any indices";
+    const defaultMessage = "Data view's configured pattern does not match any indices";
 
     super(
       message && message.length ? `No matching indices found: ${message}` : defaultMessage

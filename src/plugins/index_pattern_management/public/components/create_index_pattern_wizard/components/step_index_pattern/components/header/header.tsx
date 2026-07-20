@@ -95,7 +95,7 @@ export const Header: React.FC<HeaderProps> = ({
         <h2>
           <FormattedMessage
             id="indexPatternManagement.createIndexPattern.stepHeader"
-            defaultMessage="Step {currentStepNumber} of {totalStepNumber}: Define an index pattern"
+            defaultMessage="Step {currentStepNumber} of {totalStepNumber}: Define a data view"
             values={{
               currentStepNumber: stepInfo.currentStepNumber,
               totalStepNumber: stepInfo.totalStepNumber,
@@ -134,7 +134,7 @@ export const Header: React.FC<HeaderProps> = ({
               helpText={
                 <FormattedMessage
                   id="indexPatternManagement.createIndexPattern.step.displayNameHelpText"
-                  defaultMessage="A friendly name to show in the UI instead of the index pattern. Leave empty to use the pattern as the display name."
+                  defaultMessage="A friendly name to show in the UI instead of the pattern. Leave empty to use the pattern as the display name."
                 />
               }
             >
@@ -205,7 +205,7 @@ const renderIndexPatternInput = (
       label={
         <FormattedMessage
           id="indexPatternManagement.createIndexPattern.step.indexPatternLabel"
-          defaultMessage="Index pattern name"
+          defaultMessage="Pattern"
         />
       }
       isInvalid={isInputInvalid}

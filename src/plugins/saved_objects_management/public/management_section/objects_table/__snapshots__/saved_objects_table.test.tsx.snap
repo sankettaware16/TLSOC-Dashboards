@@ -1034,7 +1034,7 @@ exports[`SavedObjectsTable export should allow the user to choose when exporting
           Array [
             Object {
               "id": "index-pattern",
-              "label": "index-pattern (0)",
+              "label": "data view (0)",
             },
             Object {
               "id": "visualization",
@@ -1256,9 +1256,9 @@ exports[`SavedObjectsTable should render normally 1`] = `
             "name": "Type",
             "options": Array [
               Object {
-                "name": "index-pattern",
+                "name": "data view",
                 "value": "index-pattern",
-                "view": "index-pattern (0)",
+                "view": "data view (0)",
               },
               Object {
                 "name": "visualization",

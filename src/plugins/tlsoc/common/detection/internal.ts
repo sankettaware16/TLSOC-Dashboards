@@ -56,7 +56,7 @@ export function assertValidRule(rule: RuleDefinition): void {
     throw new Error('Detection rule must have a non-empty name.');
   }
   if (typeof rule.index !== 'string' || rule.index.trim() === '') {
-    throw new Error(`Detection rule "${rule.name}" must specify an index pattern.`);
+    throw new Error(`Detection rule "${rule.name}" must specify a data view.`);
   }
   if (!rule.group || !Array.isArray(rule.group.conditions) || rule.group.conditions.length === 0) {
     throw new Error(`Detection rule "${rule.name}" must have at least one condition.`);
@@ -113,7 +113,7 @@ export function assertValidThresholdRule(rule: ThresholdRuleDefinition): void {
     throw new Error('Threshold rule must have a non-empty name.');
   }
   if (typeof rule.index !== 'string' || rule.index.trim() === '') {
-    throw new Error(`Threshold rule "${rule.name}" must specify an index pattern.`);
+    throw new Error(`Threshold rule "${rule.name}" must specify a data view.`);
   }
   if (!rule.filter || !Array.isArray(rule.filter.conditions) || rule.filter.conditions.length === 0) {
     throw new Error(`Threshold rule "${rule.name}" must have at least one filter condition.`);

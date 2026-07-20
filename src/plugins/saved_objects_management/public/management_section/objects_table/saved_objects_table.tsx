@@ -83,6 +83,7 @@ import {
   SavedObjectCountOptions,
   getRelationships,
   getSavedObjectLabel,
+  getSavedObjectTypeDisplayName,
   fetchExportObjects,
   fetchExportByTypeAndSearch,
   filterQuery,
@@ -335,10 +336,11 @@ export class SavedObjectsTable extends Component<SavedObjectsTableProps, SavedOb
     const filteredTypeCounts = filteredSavedObjectCounts.type || {};
 
     Object.keys(filteredTypeCounts).forEach((id) => {
-      // Add this type as a bulk-export option.
+      // Add this type as a bulk-export option. The option id stays the raw type;
+      // only the label is mapped for display.
       exportAllOptions.push({
         id,
-        label: `${id} (${filteredTypeCounts[id] || 0})`,
+        label: `${getSavedObjectTypeDisplayName(id)} (${filteredTypeCounts[id] || 0})`,
       });
 
       // Select it by default.
@@ -1137,7 +1139,9 @@ export class SavedObjectsTable extends Component<SavedObjectsTableProps, SavedOb
     const typeCounts = savedObjectCounts.type || {};
 
     const filterOptions = allowedTypes.map((type) => {
-      const convertedName = convertIndexPatternTerminology(type, isDatasetManagementEnabled);
+      const convertedName = getSavedObjectTypeDisplayName(
+        convertIndexPatternTerminology(type, isDatasetManagementEnabled)
+      );
       return {
         value: type,
         name: convertedName,

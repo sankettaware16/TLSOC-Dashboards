@@ -186,7 +186,7 @@ export class SavedObjectsManagementPlugin
       core.application.register({
         id: APP_ID,
         title: i18n.translate('savedObjectsManagement.assets.label', {
-          defaultMessage: 'Assets',
+          defaultMessage: 'Workspace assets',
         }),
         description: i18n.translate('savedObjectsManagement.assets.description', {
           defaultMessage: 'Manage and share your global assets.',

@@ -287,7 +287,7 @@ export function FilterItem(props: Props) {
       label.message = props.intl.formatMessage(
         {
           id: 'data.filter.filterBar.labelErrorInfo',
-          defaultMessage: 'Index pattern {indexPattern} not found',
+          defaultMessage: 'Data view {indexPattern} not found',
         },
         {
           indexPattern: filter.meta.index,

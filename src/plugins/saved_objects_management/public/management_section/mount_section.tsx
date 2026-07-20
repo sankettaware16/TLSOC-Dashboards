@@ -59,7 +59,7 @@ const workspaceAssetsTitle = i18n.translate('savedObjectsManagement.objects.work
   defaultMessage: 'Workspace assets',
 });
 const assetsTitle = i18n.translate('savedObjectsManagement.objects.assetsTitle', {
-  defaultMessage: 'Assets',
+  defaultMessage: 'Workspace assets',
 });
 
 const SavedObjectsEditionPage = lazy(() => import('./saved_objects_edition_page'));

@@ -91,7 +91,7 @@ const confirmModalOptionsDelete = {
     defaultMessage: 'Delete',
   }),
   title: i18n.translate('indexPatternManagement.editIndexPattern.deleteHeader', {
-    defaultMessage: 'Delete index pattern?',
+    defaultMessage: 'Delete data view?',
   }),
 };
 
@@ -218,7 +218,7 @@ export const EditIndexPattern = withRouter(
     );
 
     const headingAriaLabel = i18n.translate('indexPatternManagement.editIndexPattern.detailsAria', {
-      defaultMessage: 'Index pattern details',
+      defaultMessage: 'Data view details',
     });
 
     chrome.docTitle.change(indexPattern.getDisplayName());
@@ -233,7 +233,7 @@ export const EditIndexPattern = withRouter(
             helpText={i18n.translate(
               'indexPatternManagement.editIndexPattern.displayNameHelpText',
               {
-                defaultMessage: 'A friendly name shown in the UI instead of the index pattern.',
+                defaultMessage: 'A friendly name shown in the UI instead of the pattern.',
               }
             )}
           >

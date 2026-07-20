@@ -129,7 +129,7 @@ export const TimeField: React.FC<TimeFieldProps> = ({
         <p>
           <FormattedMessage
             id="indexPatternManagement.createIndexPattern.stepTime.field.noTimeFieldsLabel"
-            defaultMessage="The indices which match this index pattern don't contain any time fields."
+            defaultMessage="The indices which match this data view don't contain any time fields."
           />
         </p>
       </EuiText>

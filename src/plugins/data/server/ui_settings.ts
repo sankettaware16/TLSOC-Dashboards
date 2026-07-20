@@ -692,12 +692,12 @@ export function getUiSettings(
     },
     [UI_SETTINGS.INDEXPATTERN_PLACEHOLDER]: {
       name: i18n.translate('data.advancedSettings.indexPatternPlaceholderTitle', {
-        defaultMessage: 'Index pattern placeholder',
+        defaultMessage: 'Data view placeholder',
       }),
       value: '',
       description: i18n.translate('data.advancedSettings.indexPatternPlaceholderText', {
         defaultMessage:
-          'The placeholder for the "Index pattern name" field in "Management > Index Patterns > Create Index Pattern".',
+          'The placeholder for the "Pattern" field in "Management > Data views > Create data view".',
       }),
       schema: schema.string(),
     },
@@ -798,7 +798,7 @@ export function getUiSettings(
         defaultMessage: `Allows you to set how often the data frame schema is updated.
           <ul>
             <li><strong>{perSource}:</strong> hydrates the schema when the data source changes.
-              For example, any time the index pattern is change the data frame schema is hydrated.</li>
+              For example, any time the data view is changed the data frame schema is hydrated.</li>
             <li><strong>{perQuery}:</strong> hydrates the schema per query to the data source.
               Could be expensive, but ensures the schema of the data frame fits the result set.</li>
             <li><strong>{perResponse}:</strong> hydrates the schema if the data source returns a schema.

@@ -10,10 +10,10 @@ import { DatasetTypeConfig } from './types';
 const createSetupDatasetServiceMock = (): jest.Mocked<DatasetServiceContract> => {
   const mockIndexPatternType: DatasetTypeConfig = {
     id: DEFAULT_DATA.SET_TYPES.INDEX_PATTERN,
-    title: 'Index Patterns',
+    title: 'Data views',
     meta: {
       icon: { type: 'indexPatternApp' },
-      tooltip: 'OpenSearch Index Patterns',
+      tooltip: 'Data views',
     },
     toDataset: jest.fn(),
     fetch: jest.fn(),

@@ -33,7 +33,20 @@ export function getSavedObjectLabel(type: string) {
     case 'index-pattern':
     case 'index-patterns':
     case 'indexPatterns':
-      return 'index patterns';
+      return 'data views';
+    default:
+      return type;
+  }
+}
+
+/**
+ * Maps a raw saved object type id to its user-facing display name.
+ * Display only — never use the returned value as a type id, filter value, or option id.
+ */
+export function getSavedObjectTypeDisplayName(type: string) {
+  switch (type) {
+    case 'index-pattern':
+      return 'data view';
     default:
       return type;
   }

@@ -56,7 +56,7 @@ describe('buildMonitorForSave — the saved monitor is exactly the proven compil
       /group by at least one field/i
     );
     expect(() => buildMonitorForSave('stateless', { ...stateless, index: '' })).toThrow(
-      /index pattern/i
+      /data view/i
     );
   });
 });

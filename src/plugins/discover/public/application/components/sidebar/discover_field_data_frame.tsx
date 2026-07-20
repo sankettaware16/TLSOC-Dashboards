@@ -36,7 +36,7 @@ export function DiscoverFieldDataFrame({ onCreateIndexPattern, onNormalizeIndexP
           data-test-subj="dscSideBarCreateIndexPatternButton"
         >
           {i18n.translate('discover.fieldChooser.dataFrame.createIndexPattern', {
-            defaultMessage: 'Create index pattern',
+            defaultMessage: 'Create data view',
           })}
         </EuiButtonEmpty>
       </EuiFlexItem>

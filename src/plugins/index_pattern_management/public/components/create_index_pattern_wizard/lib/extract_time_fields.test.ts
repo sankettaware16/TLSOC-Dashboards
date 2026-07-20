@@ -38,7 +38,7 @@ describe('extractTimeFields', () => {
     ];
 
     expect(extractTimeFields(fields)).toEqual([
-      { display: `The indices which match this index pattern don't contain any time fields.` },
+      { display: `The indices which match this data view don't contain any time fields.` },
     ]);
   });
 

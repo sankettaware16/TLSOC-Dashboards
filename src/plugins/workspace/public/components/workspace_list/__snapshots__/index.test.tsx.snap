@@ -281,24 +281,6 @@ exports[`WorkspaceList should render title and table normally 1`] = `
                   </th>
                   <th
                     class="euiTableHeaderCell"
-                    data-test-subj="tableHeaderCell_dataSources_4"
-                    role="columnheader"
-                    scope="col"
-                    style="width: 18%;"
-                  >
-                    <span
-                      class="euiTableCellContent"
-                    >
-                      <span
-                        class="euiTableCellContent__text"
-                        title="Data sources"
-                      >
-                        Data sources
-                      </span>
-                    </span>
-                  </th>
-                  <th
-                    class="euiTableHeaderCell"
                     role="columnheader"
                     scope="col"
                   >
@@ -436,19 +418,6 @@ exports[`WorkspaceList should render title and table normally 1`] = `
                     >
                       Aug 5, 1999 @ 22:00:00.000
                     </div>
-                  </td>
-                  <td
-                    class="euiTableRowCell"
-                    style="width: 18%;"
-                  >
-                    <div
-                      class="euiTableRowCell__mobileHeader euiTableRowCell--hideForDesktop"
-                    >
-                      Data sources
-                    </div>
-                    <div
-                      class="euiTableCellContent euiTableCellContent--overflowingContent"
-                    />
                   </td>
                   <td
                     class="euiTableRowCell euiTableRowCell--hasActions"
@@ -611,19 +580,6 @@ exports[`WorkspaceList should render title and table normally 1`] = `
                     </div>
                   </td>
                   <td
-                    class="euiTableRowCell"
-                    style="width: 18%;"
-                  >
-                    <div
-                      class="euiTableRowCell__mobileHeader euiTableRowCell--hideForDesktop"
-                    >
-                      Data sources
-                    </div>
-                    <div
-                      class="euiTableCellContent euiTableCellContent--overflowingContent"
-                    />
-                  </td>
-                  <td
                     class="euiTableRowCell euiTableRowCell--hasActions"
                   >
                     <div
@@ -782,19 +738,6 @@ exports[`WorkspaceList should render title and table normally 1`] = `
                     >
                       Aug 5, 1999 @ 21:00:00.000
                     </div>
-                  </td>
-                  <td
-                    class="euiTableRowCell"
-                    style="width: 18%;"
-                  >
-                    <div
-                      class="euiTableRowCell__mobileHeader euiTableRowCell--hideForDesktop"
-                    >
-                      Data sources
-                    </div>
-                    <div
-                      class="euiTableCellContent euiTableCellContent--overflowingContent"
-                    />
                   </td>
                   <td
                     class="euiTableRowCell euiTableRowCell--hasActions"

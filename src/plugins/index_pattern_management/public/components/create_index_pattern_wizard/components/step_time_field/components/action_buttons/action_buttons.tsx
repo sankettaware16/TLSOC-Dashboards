@@ -59,7 +59,7 @@ export const ActionButtons = ({
       >
         <FormattedMessage
           id="indexPatternManagement.createIndexPattern.stepTime.createPatternButton"
-          defaultMessage="Create index pattern"
+          defaultMessage="Create data view"
         />
       </EuiSmallButton>
     </EuiFlexItem>

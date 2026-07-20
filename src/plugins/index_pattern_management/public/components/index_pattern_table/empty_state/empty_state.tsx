@@ -120,7 +120,7 @@ export const EmptyState = ({
             <EuiLink {...reactRouterNavigate(useHistory(), 'create')} data-test-subj="createAnyway">
               <FormattedMessage
                 id="indexPatternManagement.createIndexPattern.emptyState.createAnywayLink"
-                defaultMessage="create an index pattern"
+                defaultMessage="create a data view"
               />
             </EuiLink>
           ),

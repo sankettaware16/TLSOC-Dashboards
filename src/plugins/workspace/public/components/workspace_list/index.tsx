@@ -48,6 +48,7 @@ import {
 } from '../../utils';
 import { WorkspaceUseCase } from '../../types';
 import { NavigationPublicPluginStart } from '../../../../../plugins/navigation/public';
+import { DataSourceManagementPluginSetup } from '../../../../../plugins/data_source_management/public';
 import { DataSourceAttributesWithWorkspaces } from '../../types';
 import { formatUrlWithWorkspaceId } from '../../../../../core/public/utils';
 
@@ -97,11 +98,14 @@ export const WorkspaceListInner = ({
       uiSettings,
       savedObjects,
       notifications,
+      dataSourceManagement,
     },
     overlays,
   } = useOpenSearchDashboards<{
     navigationUI: NavigationPublicPluginStart['ui'];
+    dataSourceManagement?: DataSourceManagementPluginSetup;
   }>();
+  const isDataSourceEnabled = !!dataSourceManagement;
   const registeredUseCases = useObservable(registeredUseCases$);
   const isDashboardAdmin = application?.capabilities?.dashboards?.isDashboardAdmin;
   const initialSortField = 'name';
@@ -126,12 +130,12 @@ export const WorkspaceListInner = ({
 
   useEffect(() => {
     setDefaultWorkspaceId(uiSettings?.get(DEFAULT_WORKSPACE));
-    if (savedObjects) {
+    if (isDataSourceEnabled && savedObjects) {
       getDataSourcesList(savedObjects.client).then((data) => {
         setAllDataSources(data);
       });
     }
-  }, [savedObjects, uiSettings]);
+  }, [savedObjects, uiSettings, isDataSourceEnabled]);
 
   const newWorkspaceList: WorkspaceAttributeWithUseCaseIDAndDataSources[] = useMemo(() => {
     return workspaceList.map(
@@ -471,7 +475,7 @@ export const WorkspaceListInner = ({
         return renderDataWithMoreBadge(dataSources, 2, item.id);
       },
     },
-  ];
+  ].filter((column) => isDataSourceEnabled || column.field !== 'dataSources');
   const allActions = [
     {
       name: (

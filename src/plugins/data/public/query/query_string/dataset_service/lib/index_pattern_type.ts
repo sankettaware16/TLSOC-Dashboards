@@ -21,10 +21,10 @@ import { injectMetaToDataStructures } from './utils';
 
 export const indexPatternTypeConfig: DatasetTypeConfig = {
   id: DEFAULT_DATA.SET_TYPES.INDEX_PATTERN,
-  title: 'Index Patterns',
+  title: 'Data views',
   meta: {
     icon: { type: 'indexPatternApp' },
-    tooltip: 'OpenSearch Index Patterns',
+    tooltip: 'Data views',
     searchOnLoad: true,
   },
 
@@ -54,7 +54,7 @@ export const indexPatternTypeConfig: DatasetTypeConfig = {
     const indexPatterns = await fetchIndexPatterns(services.savedObjects.client);
     return {
       ...dataStructure,
-      columnHeader: 'Index patterns',
+      columnHeader: 'Data views',
       children: indexPatterns,
       hasNext: false,
     };

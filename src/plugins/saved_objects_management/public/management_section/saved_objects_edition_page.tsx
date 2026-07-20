@@ -66,7 +66,7 @@ const SavedObjectsEditionPage = ({
       {
         text: useUpdatedUX
           ? i18n.translate('savedObjectsManagement.breadcrumb.updatedUX.index', {
-              defaultMessage: 'Assets',
+              defaultMessage: 'Workspace assets',
             })
           : i18n.translate('savedObjectsManagement.breadcrumb.index', {
               defaultMessage: 'Saved objects',

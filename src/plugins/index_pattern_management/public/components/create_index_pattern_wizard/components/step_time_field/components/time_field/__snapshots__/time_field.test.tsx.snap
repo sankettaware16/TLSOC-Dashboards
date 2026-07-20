@@ -178,7 +178,7 @@ exports[`TimeField should render something if hiding time field 1`] = `
   <EuiText>
     <p>
       <FormattedMessage
-        defaultMessage="The indices which match this index pattern don't contain any time fields."
+        defaultMessage="The indices which match this data view don't contain any time fields."
         id="indexPatternManagement.createIndexPattern.stepTime.field.noTimeFieldsLabel"
         values={Object {}}
       />

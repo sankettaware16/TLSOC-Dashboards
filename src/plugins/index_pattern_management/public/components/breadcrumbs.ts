@@ -36,7 +36,7 @@ export function getListBreadcrumbs(currentWorkspaceName?: string) {
     {
       text: currentWorkspaceName
         ? i18n.translate('indexPatternManagement.inWorkspace.indexPatterns.listBreadcrumb', {
-            defaultMessage: 'Workspace index patterns',
+            defaultMessage: 'Workspace data views',
           })
         : i18n.translate('indexPatternManagement.indexPatterns.listBreadcrumb', {
             // TLSOC PROB-26: display label only — see plugin.ts sectionsHeader.
@@ -52,7 +52,7 @@ export function getCreateBreadcrumbs() {
     ...getListBreadcrumbs(),
     {
       text: i18n.translate('indexPatternManagement.indexPatterns.createBreadcrumb', {
-        defaultMessage: 'Create index pattern',
+        defaultMessage: 'Create data view',
       }),
       href: `/create`,
     },

@@ -236,7 +236,7 @@ export class CreateIndexPatternWizard extends Component<
           'indexPatternManagement.indexPattern.titleExistsLabel',
           {
             values: { title: emptyPattern!.title },
-            defaultMessage: "An index pattern with the title '{title}' already exists.",
+            defaultMessage: "A data view with the title '{title}' already exists.",
           }
         );
 
@@ -338,7 +338,7 @@ export class CreateIndexPatternWizard extends Component<
             description: ((
               <FormattedMessage
                 id="indexPatternManagement.createIndexPattern.description"
-                defaultMessage="An index pattern can match a single source, for example, {single}, or {multiple} data sources, {star}."
+                defaultMessage="A data view can match a single index, for example, {single}, or {multiple} indices, {star}."
                 values={{
                   multiple: <strong>multiple</strong>,
                   single: <EuiCode>filebeat-4-3-22</EuiCode>,

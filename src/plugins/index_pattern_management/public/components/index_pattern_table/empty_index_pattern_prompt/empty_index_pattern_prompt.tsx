@@ -72,14 +72,14 @@ export const EmptyIndexPatternPrompt = ({
               <br />
               <FormattedMessage
                 id="indexPatternManagement.emptyIndexPatternPrompt.nowCreate"
-                defaultMessage="Now, create an index pattern."
+                defaultMessage="Now, create a data view."
               />
             </h2>
             <p>
               <FormattedMessage
                 id="indexPatternManagement.emptyIndexPatternPrompt.indexPatternExplanation"
-                defaultMessage="TLSOC requires an index pattern to identify which indices you want to explore. An
-                index pattern can point to a specific index, for example, your log data from
+                defaultMessage="TLSOC requires a data view to identify which indices you want to explore. A
+                data view can point to a specific index, for example, your log data from
                 yesterday, or all indices that contain your log data."
               />
             </p>
@@ -88,7 +88,7 @@ export const EmptyIndexPatternPrompt = ({
               <CreateButton options={creationOptions}>
                 <FormattedMessage
                   id="indexPatternManagement.indexPatternTable.createBtn"
-                  defaultMessage="Create index pattern"
+                  defaultMessage="Create data view"
                 />
               </CreateButton>
             )}

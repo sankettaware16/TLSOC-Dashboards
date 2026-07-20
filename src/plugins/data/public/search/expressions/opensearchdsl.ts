@@ -135,11 +135,11 @@ export const opensearchdsl = (): OpenSearchdslExpressionFunctionDefinition => ({
     request.stats({
       indexPattern: {
         label: i18n.translate('data.search.opensearch_search.indexPatternLabel', {
-          defaultMessage: 'Index pattern',
+          defaultMessage: 'Data view',
         }),
         value: args.index,
         description: i18n.translate('data.search.opensearch_search.indexPatternDescription', {
-          defaultMessage: 'The index pattern that connected to the OpenSearch indices.',
+          defaultMessage: 'The data view that connects to the OpenSearch indices.',
         }),
       },
     });

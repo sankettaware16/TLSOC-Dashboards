@@ -101,7 +101,7 @@ describe('DuplicateResultFlyout', () => {
     expect(getByText('Copy assets to targetWorkspace')).toBeInTheDocument();
 
     // Check missing reference callout title
-    expect(getByText('Index Pattern Conflicts')).toBeInTheDocument();
+    expect(getByText('Data view conflicts')).toBeInTheDocument();
     // Check failed copy icon and message
     expect(getByLabelText('visualization')).toBeInTheDocument();
     expect(getByText('visualization [id=1]')).toBeInTheDocument();

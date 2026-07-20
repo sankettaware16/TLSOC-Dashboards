@@ -68,11 +68,11 @@ const refreshTooltip = i18n.translate('indexPatternManagement.editIndexPattern.r
 });
 
 const removeAriaLabel = i18n.translate('indexPatternManagement.editIndexPattern.removeAria', {
-  defaultMessage: 'Remove index pattern.',
+  defaultMessage: 'Remove data view.',
 });
 
 const removeTooltip = i18n.translate('indexPatternManagement.editIndexPattern.removeTooltip', {
-  defaultMessage: 'Remove index pattern.',
+  defaultMessage: 'Remove data view.',
 });
 
 export function IndexHeader({

@@ -42,14 +42,14 @@ exports[`AdvancedOptions should render normally 1`] = `
       hasEmptyLabelSpace={false}
       helpText={
         <FormattedMessage
-          defaultMessage="OpenSearch Dashboards will provide a unique identifier for each index pattern. If you do not want to use this unique ID, enter a custom one."
+          defaultMessage="TLSOC will provide a unique identifier for each data view. If you do not want to use this unique ID, enter a custom one."
           id="indexPatternManagement.createIndexPattern.stepTime.options.patternLabel"
           values={Object {}}
         />
       }
       label={
         <FormattedMessage
-          defaultMessage="Custom index pattern ID"
+          defaultMessage="Custom data view ID"
           id="indexPatternManagement.createIndexPattern.stepTime.options.patternHeader"
           values={Object {}}
         />
@@ -60,7 +60,7 @@ exports[`AdvancedOptions should render normally 1`] = `
         data-test-subj="createIndexPatternIdInput"
         name="indexPatternId"
         onChange={[Function]}
-        placeholder="custom-index-pattern-id"
+        placeholder="custom-data-view-id"
         value="foobar"
       />
     </EuiCompressedFormRow>
