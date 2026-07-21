@@ -12,6 +12,7 @@ import {
   detectionRuleSavedObjectType,
   caseSavedObjectType,
   userDirectorySavedObjectType,
+  alertOverrideSavedObjectType,
 } from './saved_objects';
 import { tlsocSecurityLogsSpecProvider } from './sample_data';
 import { TlsocConfigType } from './config';
@@ -51,6 +52,8 @@ export class TlsocServerPlugin {
     core.savedObjects.registerType(detectionRuleSavedObjectType);
     core.savedObjects.registerType(caseSavedObjectType);
     core.savedObjects.registerType(userDirectorySavedObjectType);
+    // PROB-29: the honest reopen display-override (see saved_objects/alert_override.ts).
+    core.savedObjects.registerType(alertOverrideSavedObjectType);
     const router = core.http.createRouter();
     // core.http.auth = the current-user seam (Task 5a.2): case routes resolve the acting
     // user from it via getCurrentActor (populated by the vendored security plugin's registerAuth).

@@ -12,6 +12,7 @@ export const ACTIVITY_TYPES: CaseActivityType[] = [
   'commented',
   'alerts_linked',
   'alerts_acknowledged',
+  'alerts_reopened',
 ];
 
 /** Human-readable summary builders (pure — the testable core). */
@@ -45,6 +46,18 @@ export function describeAlertsAcknowledged(acked: number, failed: number): strin
   const ackedPart = acked === 1 ? 'Acknowledged 1 linked alert' : `Acknowledged ${acked} linked alerts`;
   if (failed <= 0) return `${ackedPart} on close`;
   return `${ackedPart} on close (${failed} could not be acknowledged)`;
+}
+
+/**
+ * Reopen-time reactivation summary (PROB-29). Mirrors {@link describeAlertsAcknowledged}: reports
+ * exactly what happened — including the partial-failure case — so the trail never overstates how
+ * many linked alerts a reopen actually reactivated via the TLSOC display override.
+ */
+export function describeAlertsReopened(reopened: number, failed = 0): string {
+  const part =
+    reopened === 1 ? 'Reactivated 1 linked alert' : `Reactivated ${reopened} linked alerts`;
+  if (failed <= 0) return `${part} on reopen`;
+  return `${part} on reopen (${failed} could not be reactivated)`;
 }
 
 /** Pure entry builder; id + createdAt supplied by the caller (route) so this stays pure. */

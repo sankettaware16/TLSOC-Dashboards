@@ -17,7 +17,7 @@ import {
 import { CaseActivity, CaseActivityType } from './types';
 
 describe('ACTIVITY_TYPES', () => {
-  it('contains exactly the six expected types', () => {
+  it('contains exactly the seven expected types', () => {
     expect(ACTIVITY_TYPES).toEqual([
       'created',
       'status_changed',
@@ -25,6 +25,7 @@ describe('ACTIVITY_TYPES', () => {
       'commented',
       'alerts_linked',
       'alerts_acknowledged',
+      'alerts_reopened',
     ]);
   });
 });

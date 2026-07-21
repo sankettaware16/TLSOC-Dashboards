@@ -293,6 +293,27 @@ export function AlertFlyout({
           </>
         ) : null}
 
+        {/* PROB-29: honest reopen note — the engine's real state is disclosed, not hidden. */}
+        {alert.reopenedFromCase ? (
+          <>
+            <EuiCallOut
+              size="s"
+              color="primary"
+              iconType="refresh"
+              data-test-subj="tlsocReopenedNote"
+              title={`Reactivated by reopening case "${alert.reopenedFromCase.caseName}"`}
+            >
+              <p>
+                This alert is back in the active queue because its case was reopened. Its engine
+                state is still <strong>{alert.state}</strong> — TLSOC has no un-acknowledge API, so
+                this is an honest display override, not a change to the alerting engine.
+                Acknowledging it here clears the reopen.
+              </p>
+            </EuiCallOut>
+            <EuiSpacer size="m" />
+          </>
+        ) : null}
+
         {/* About */}
         <EuiText size="s">
           <p>{reason}</p>
@@ -496,7 +517,12 @@ export function AlertFlyout({
         <EuiSpacer size="m" />
         <EuiFlexGroup gutterSize="s">
           <EuiFlexItem grow={false}>
-            <EuiButton isDisabled={alert.state !== 'ACTIVE'} onClick={onAcknowledge}>
+            {/* PROB-29: a reopened alert is engine-ACKNOWLEDGED but reads as active — allow
+                acknowledging it to clear the reopen override (the route deletes it). */}
+            <EuiButton
+              isDisabled={alert.state !== 'ACTIVE' && !alert.reopenedFromCase}
+              onClick={onAcknowledge}
+            >
               Acknowledge
             </EuiButton>
           </EuiFlexItem>

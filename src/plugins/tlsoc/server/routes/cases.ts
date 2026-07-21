@@ -21,9 +21,15 @@ import {
   describeComment,
   describeAlertsLinked,
   describeAlertsAcknowledged,
+  describeAlertsReopened,
 } from '../../common/cases';
-import { groupAckTargets, normalizeAlert, partitionByIds } from '../../common/alerts';
-import { buildRuleRefMap, fetchAlertsByIds } from './alerts';
+import {
+  AlertOverrideAttributes,
+  groupAckTargets,
+  normalizeAlert,
+  partitionByIds,
+} from '../../common/alerts';
+import { buildRuleRefMap, deleteAlertOverrides, fetchAlertsByIds } from './alerts';
 import { getCurrentActor } from '../lib/current_actor';
 import {
   callerHasAnyRole,
@@ -34,7 +40,7 @@ import {
   isWorkspaceAccessError,
   workspaceForbidden,
 } from '../lib/authz';
-import { CASE_SO_TYPE } from '../saved_objects';
+import { ALERT_OVERRIDE_SO_TYPE, CASE_SO_TYPE } from '../saved_objects';
 
 const TYPE = CASE_SO_TYPE;
 
@@ -358,8 +364,16 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
       // is non-blocking: a flaky Alerting call must never prevent the case from closing — partial
       // results are recorded honestly in the audit trail instead.
       let ackActivity: CaseActivity | null = null;
+      let reopenActivity: CaseActivity | null = null;
       const isClosing =
         body.status === 'Closed' && body.status !== existing.attributes.status;
+      // PROB-29: a reopen is Closed → any non-Closed status. Its linked alerts were acknowledged on
+      // close (the engine has no un-acknowledge API), so we reactivate them via TLSOC display
+      // overrides instead of touching the protected alerting index.
+      const isReopening =
+        body.status !== undefined &&
+        body.status !== 'Closed' &&
+        existing.attributes.status === 'Closed';
       if (isClosing && body.acknowledgeAlerts !== false) {
         const linkedIds: string[] = existing.attributes.linkedAlertIds ?? [];
         if (linkedIds.length > 0) {
@@ -403,6 +417,69 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
           } catch (err) {
             // Even listing the alerts failed — close the case anyway, just log it.
             logger.warn(`tlsoc cases close-ack: skipped (could not fetch linked alerts): ${err.message}`);
+          }
+        }
+      }
+
+      // PROB-29 RE-CLOSE: the alerts are acknowledged-done again — drop any reopen display-override
+      // so they stop reading as reactivated. Best-effort and non-blocking (deleteAlertOverrides
+      // never throws), and independent of the acknowledgeAlerts opt-out: a re-closed case's alerts
+      // must not linger as "Reopened" regardless of whether the analyst re-acknowledged them.
+      if (isClosing) {
+        const linkedIds: string[] = existing.attributes.linkedAlertIds ?? [];
+        if (linkedIds.length > 0) {
+          await deleteAlertOverrides(soClient, linkedIds, logger, 'case re-closed', id);
+        }
+      }
+
+      // PROB-29 REOPEN: for each linked alert the engine STILL reports ACKNOWLEDGED, upsert a display
+      // override so it reads as active again (id = alert id, overwrite:true so a re-reopen refreshes
+      // it). ACTIVE alerts (never acknowledged) and engine-COMPLETED alerts are left untouched — an
+      // override only ever changes DISPLAY for an ACKNOWLEDGED alert. Non-blocking like the close-ack
+      // path: a flaky Alerting/SO call must never prevent the case from reopening.
+      if (isReopening) {
+        const linkedIds: string[] = existing.attributes.linkedAlertIds ?? [];
+        if (linkedIds.length > 0) {
+          try {
+            const esClient = context.core.opensearch.client.asCurrentUser;
+            const rawAlerts = await fetchAlertsByIds(esClient, linkedIds);
+            const acknowledged = rawAlerts.filter((a: any) => a?.state === 'ACKNOWLEDGED');
+            let reopened = 0;
+            let failed = 0;
+            for (const a of acknowledged) {
+              const attrs: AlertOverrideAttributes = {
+                alertId: a.id,
+                caseId: id,
+                caseName: existing.attributes.title,
+                monitorId: a?.monitor_id ?? '',
+                reopenedAt: now,
+                reopenedBy: actor,
+              };
+              try {
+                await soClient.create<AlertOverrideAttributes>(ALERT_OVERRIDE_SO_TYPE, attrs, {
+                  id: a.id,
+                  overwrite: true,
+                });
+                reopened += 1;
+              } catch (ovErr) {
+                failed += 1;
+                logger.warn(
+                  `tlsoc cases reopen: could not write override for alert ${a.id}: ${ovErr.message}`
+                );
+              }
+            }
+            if (reopened > 0 || failed > 0) {
+              reopenActivity = buildActivity(
+                'alerts_reopened',
+                describeAlertsReopened(reopened, failed),
+                actor,
+                genId(),
+                now
+              );
+            }
+          } catch (err) {
+            // Listing the alerts failed — reopen the case anyway, just log it.
+            logger.warn(`tlsoc cases reopen: skipped (could not fetch linked alerts): ${err.message}`);
           }
         }
       }
@@ -461,6 +538,9 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
       if (ackActivity) {
         newEntries.push(ackActivity); // after status_changed — reads as "closed, then acknowledged"
       }
+      if (reopenActivity) {
+        newEntries.push(reopenActivity); // after status_changed — reads as "reopened, then reactivated"
+      }
       if (newEntries.length > 0) {
         patch.activity = [...(existing.attributes.activity ?? []), ...newEntries];
       }
@@ -488,9 +568,10 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
       }
       const soClient = context.core.savedObjects.client;
       const { id } = request.params as { id: string };
+      let existing: any;
       try {
         // GET first so we return 404 if not found
-        await soClient.get<CaseAttributes>(TYPE, id);
+        existing = await soClient.get<CaseAttributes>(TYPE, id);
       } catch (err) {
         if (err?.output?.statusCode === 404 || err?.statusCode === 404) {
           return response.notFound({ body: { message: `Case ${id} not found.` } });
@@ -502,6 +583,13 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
         });
       }
       try {
+        // PROB-29: best-effort clean this case's reopen display-overrides before deleting it, so a
+        // deleted case leaves none of its alerts falsely reading "Reopened". Non-blocking — the
+        // overrides also self-clean via the LIST merge once the engine completes the alert.
+        const linkedIds: string[] = existing?.attributes?.linkedAlertIds ?? [];
+        if (linkedIds.length > 0) {
+          await deleteAlertOverrides(soClient, linkedIds, logger, 'case deleted', id);
+        }
         await soClient.delete(TYPE, id);
         return response.ok({ body: { deleted: true } });
       } catch (err) {

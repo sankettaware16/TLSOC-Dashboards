@@ -13,13 +13,15 @@ import { refreshSeenValuesSweep } from '../lib/new_terms_state';
 import { syncStatelessMonitorTargets } from './monitors';
 import { syncIndicatorListMonitors } from './value_lists';
 import {
+  AlertOverrideAttributes,
   RuleRefMap,
   TlsocAlert,
+  applyAlertOverride,
   filterAlertsByRange,
   normalizeAlert,
   normalizeFinding,
 } from '../../common/alerts';
-import { DETECTION_RULE_SO_TYPE } from '../saved_objects';
+import { ALERT_OVERRIDE_SO_TYPE, DETECTION_RULE_SO_TYPE } from '../saved_objects';
 
 /**
  * Build a map from OpenSearch Alerting monitor id → TLSOC rule reference by scanning all
@@ -99,6 +101,89 @@ export async function fetchAlertsByIds(
     if (alerts.length < PAGE_SIZE) break; // short page = no more alerts
   }
   return collected;
+}
+
+/**
+ * PROB-29: MERGE the honest reopen display-overrides onto a normalized alert list.
+ *
+ * Loads every live `tlsoc-alert-override` (there are only as many as there are reopened alerts —
+ * typically a handful, so ONE `find` is far cheaper than a per-alert bulkGet) and, for each returned
+ * alert with a matching override, delegates to the pure {@link applyAlertOverride}: an alert the
+ * engine still reports ACKNOWLEDGED gains an additive `reopenedFromCase`; an alert the engine has
+ * moved on (COMPLETED/DELETED/ACTIVE) wins and its now-stale override is lazily deleted
+ * (fire-and-forget). The merge is BEST-EFFORT: any SO failure logs and returns the alerts unchanged,
+ * never breaking the Alerts list.
+ */
+export async function mergeAlertOverrides(
+  soClient: SavedObjectsClientContract,
+  alerts: TlsocAlert[],
+  logger: Logger
+): Promise<TlsocAlert[]> {
+  let overrides: Map<string, AlertOverrideAttributes>;
+  try {
+    const found = await soClient.find<AlertOverrideAttributes>({
+      type: ALERT_OVERRIDE_SO_TYPE,
+      perPage: 1000,
+    });
+    overrides = new Map(found.saved_objects.map((so) => [so.id, so.attributes]));
+  } catch (err) {
+    logger.warn(`tlsoc alerts: reopen-override merge skipped (find failed): ${err.message}`);
+    return alerts;
+  }
+  if (overrides.size === 0) return alerts;
+
+  const staleIds: string[] = [];
+  const merged = alerts.map((a) => {
+    const override = overrides.get(a.id);
+    if (!override) return a;
+    const { alert, stale } = applyAlertOverride(a, override);
+    if (stale) staleIds.push(a.id);
+    return alert;
+  });
+
+  // Lazy stale-override cleanup — engine-COMPLETE-wins already decided display above; deleting the
+  // dead SO is pure hygiene, so it's fire-and-forget and never blocks or fails the list response.
+  if (staleIds.length > 0) {
+    void deleteAlertOverrides(soClient, staleIds, logger, 'stale (engine no longer acknowledged)');
+  }
+  return merged;
+}
+
+/**
+ * PROB-29: best-effort delete of reopen-override SOs (id = alert id). 404s are tolerated (the
+ * override may already be gone). Never throws — the caller's real work (ack, re-close) must not fail
+ * because a display-override could not be cleaned up.
+ *
+ * `ownerCaseId` scopes the delete to overrides written BY that case: when one alert is linked to two
+ * cases and both were reopened, the override id (= alert id) is shared and its `caseId` records the
+ * last reopener. Re-closing / deleting one case must NOT wipe an override another still-reopened case
+ * owns — so the case-lifecycle callers pass their own id and an override owned by a different case is
+ * left in place. The unconditional callers (manual acknowledge, stale-engine cleanup) omit it: those
+ * clears are correct regardless of which case reopened the alert.
+ */
+export async function deleteAlertOverrides(
+  soClient: SavedObjectsClientContract,
+  alertIds: string[],
+  logger: Logger,
+  reason: string,
+  ownerCaseId?: string
+): Promise<void> {
+  await Promise.all(
+    alertIds.map(async (id) => {
+      try {
+        if (ownerCaseId !== undefined) {
+          // Only delete if this override belongs to the calling case.
+          const so = await soClient.get<AlertOverrideAttributes>(ALERT_OVERRIDE_SO_TYPE, id);
+          if (so.attributes.caseId !== ownerCaseId) return; // owned by another reopened case — keep it
+        }
+        await soClient.delete(ALERT_OVERRIDE_SO_TYPE, id);
+      } catch (err: any) {
+        const status = err?.output?.statusCode ?? err?.statusCode;
+        if (status === 404) return; // already gone — the desired end state
+        logger.warn(`tlsoc alerts: could not delete reopen override ${id} (${reason}): ${err.message}`);
+      }
+    })
+  );
 }
 
 /**
@@ -267,6 +352,10 @@ export function registerAlertRoutes(router: IRouter, logger: Logger, auth?: Http
           total = body?.totalAlerts ?? alerts.length;
         }
 
+        // PROB-29: merge the honest reopen display-overrides. Additive only — `total` is unchanged
+        // (the merge annotates alerts and lazily prunes dead override SOs; it never adds/removes rows).
+        alerts = await mergeAlertOverrides(soClient, alerts, logger);
+
         return response.ok({ body: { alerts, total } });
       } catch (err) {
         logger.error(`tlsoc alerts list failed: ${err.message}`);
@@ -315,6 +404,16 @@ export function registerAlertRoutes(router: IRouter, logger: Logger, auth?: Http
           { requestTimeout: 15000, maxRetries: 0 }
         );
         const body = (resp as any).body;
+        // PROB-29: the analyst finished this alert again — clear any reopen display-override so it
+        // stops reading as reactivated. Best-effort + non-blocking: the acknowledge already
+        // succeeded, so a failed override cleanup must never turn a 200 into an error (it self-heals
+        // via the LIST merge's lazy stale-cleanup once the engine completes the alert anyway).
+        void deleteAlertOverrides(
+          context.core.savedObjects.client,
+          alertIds,
+          logger,
+          'acknowledged again'
+        ).catch((e) => logger.warn(`tlsoc acknowledge: override cleanup failed: ${e.message}`));
         return response.ok({ body: { success: body?.success ?? [], failed: body?.failed ?? [] } });
       } catch (err) {
         const isTimeout =

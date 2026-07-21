@@ -24,13 +24,14 @@ import {
   EuiSuperDatePicker,
   EuiText,
   EuiTitle,
+  EuiToolTip,
   OnRefreshChangeProps,
   OnTimeChangeProps,
 } from '@elastic/eui';
 import { CoreStart } from 'opensearch-dashboards/public';
 import { DataPublicPluginStart } from '../../../data/public';
 import type { DiscoverStart } from '../../../discover/public';
-import { TlsocAlert, groupAckTargets } from '../../common/alerts';
+import { TlsocAlert, effectiveAlertState, groupAckTargets } from '../../common/alerts';
 import { buildCaseFromAlert } from '../../common/cases';
 import { sortAlerts } from './sort';
 import { useAlerts } from './use_alerts';
@@ -155,10 +156,14 @@ export function AlertsApp({ core, data, discover }: Props) {
 
   const visible = sortAlerts(
     alerts.filter((a) => {
+      // PROB-29: filter on the EFFECTIVE state so a reopened alert (engine ACKNOWLEDGED + live
+      // override) reads as ACTIVE — included by Active, excluded from Acknowledged — while its real
+      // `state` stays honest everywhere else.
+      const eff = effectiveAlertState(a);
       const stateMatch =
         stateFilter === 'all' ||
-        (stateFilter === 'active' && a.state === 'ACTIVE') ||
-        (stateFilter === 'acknowledged' && a.state === 'ACKNOWLEDGED');
+        (stateFilter === 'active' && eff === 'ACTIVE') ||
+        (stateFilter === 'acknowledged' && eff === 'ACKNOWLEDGED');
       const sevMatch = sevFilter === 'all' || a.severityLabel === sevFilter;
       return stateMatch && sevMatch;
     })
@@ -200,9 +205,20 @@ export function AlertsApp({ core, data, discover }: Props) {
     {
       field: 'state',
       name: 'State',
-      render: (_: any, a: TlsocAlert) => (
-        <EuiBadge color={stateColor(a.state)}>{a.state}</EuiBadge>
-      ),
+      render: (_: any, a: TlsocAlert) =>
+        a.reopenedFromCase ? (
+          // PROB-29: honest reactivation badge — the tooltip discloses the real engine state so the
+          // display override never hides that the engine still has this alert ACKNOWLEDGED.
+          <EuiToolTip
+            content={`Engine state: ${a.state}. Reactivated by reopening case "${a.reopenedFromCase.caseName}".`}
+          >
+            <EuiBadge color="accent" iconType="refresh">
+              Reopened · {a.reopenedFromCase.caseName}
+            </EuiBadge>
+          </EuiToolTip>
+        ) : (
+          <EuiBadge color={stateColor(a.state)}>{a.state}</EuiBadge>
+        ),
     },
     {
       field: 'startTime',
@@ -224,7 +240,9 @@ export function AlertsApp({ core, data, discover }: Props) {
           description: 'Acknowledge this alert',
           icon: 'check',
           type: 'icon',
-          available: (a: TlsocAlert) => a.state === 'ACTIVE',
+          // PROB-29: a reopened alert reads as active — acknowledging it clears the display override
+          // (the _acknowledge route deletes it), so the action is offered for reopened alerts too.
+          available: (a: TlsocAlert) => a.state === 'ACTIVE' || !!a.reopenedFromCase,
           onClick: (a: TlsocAlert) => acknowledge(a.monitorId, [a.id]),
         },
         {

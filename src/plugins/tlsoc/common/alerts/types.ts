@@ -78,6 +78,39 @@ export interface TlsocAlert {
   rule: RuleRef | null;
   /** True when rule is non-null (the alert's monitor was created by a saved TLSOC detection). */
   ruleKnown: boolean;
+  /**
+   * PROB-29: an ADDITIVE display signal set at LIST-hydration time when this alert is still
+   * ACKNOWLEDGED on the engine BUT has a live TLSOC reopen override (its case was reopened, and the
+   * engine has no un-acknowledge API). The real `state` field stays ACKNOWLEDGED (honest); the UI
+   * keys off this field to show the alert as reactivated ("Reopened · <case>") and include it in the
+   * Active filter. Absent for every alert without a live override.
+   */
+  reopenedFromCase?: ReopenedFromCase;
+}
+
+/**
+ * PROB-29: the minimal, client-facing projection of a `tlsoc-alert-override` merged onto a
+ * normalized alert. Carries only what the UI needs to render the "Reopened · <case>" badge and the
+ * honest flyout note — the full override SO (actor, monitorId) stays server-side.
+ */
+export interface ReopenedFromCase {
+  caseId: string;
+  caseName: string;
+  reopenedAt: string;
+}
+
+/**
+ * PROB-29: the attributes of a `tlsoc-alert-override` saved object (id = the alert id). Recorded on
+ * case reopen for each linked alert the engine still reports ACKNOWLEDGED; deleted on re-close,
+ * manual acknowledge, or lazily when the engine finally COMPLETES the alert.
+ */
+export interface AlertOverrideAttributes {
+  alertId: string;
+  caseId: string;
+  caseName: string;
+  monitorId: string;
+  reopenedAt: string;
+  reopenedBy: string;
 }
 
 /** A single query (doc-level monitor query) associated with a finding. */

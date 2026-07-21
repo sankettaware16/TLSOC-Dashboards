@@ -20,7 +20,10 @@ export type CaseActivityType =
   | 'edited'
   | 'commented'
   | 'alerts_linked'
-  | 'alerts_acknowledged';
+  | 'alerts_acknowledged'
+  // PROB-29: reopening a Closed case reactivates its linked ACKNOWLEDGED alerts via a TLSOC display
+  // override — recorded honestly in the trail.
+  | 'alerts_reopened';
 
 export interface CaseActivity {
   id: string;

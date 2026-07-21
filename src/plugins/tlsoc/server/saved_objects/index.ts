@@ -5,6 +5,7 @@
 
 export { detectionRuleSavedObjectType, DETECTION_RULE_SO_TYPE } from './detection_rule';
 export { caseSavedObjectType, CASE_SO_TYPE } from './case';
+export { alertOverrideSavedObjectType, ALERT_OVERRIDE_SO_TYPE } from './alert_override';
 export {
   userDirectorySavedObjectType,
   USER_DIRECTORY_SO_TYPE,

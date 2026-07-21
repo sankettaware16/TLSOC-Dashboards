@@ -224,4 +224,211 @@ describe('registerCaseRoutes — PUT /api/tlsoc/cases/{id} close-time acknowledg
     expect(transportRequest).not.toHaveBeenCalled();
     expect(response.ok).toHaveBeenCalled();
   });
+
+  // PROB-29: re-closing an already-reopened case must also drop the reopen display-overrides so the
+  // alerts stop reading as reactivated (the acknowledge covers the engine; this covers TLSOC) — but
+  // ONLY the overrides THIS case owns: a4's override belongs to another still-reopened case and must
+  // survive the re-close (shared-alert guard).
+  it('closing deletes only this case’s reopen overrides, leaving another case’s intact', async () => {
+    registerCaseRoutes(router, logger, statusAuth);
+    const handler = findHandler(router, 'put', '/api/tlsoc/cases/{id}');
+    const soGet = jest.fn().mockImplementation((type: string, id: string) => {
+      if (type === 'tlsoc-alert-override') {
+        // a1/a2/a3 were reopened by case1 (this case); a4 by a different still-open case.
+        return Promise.resolve({
+          id,
+          type,
+          attributes: { alertId: id, caseId: id === 'a4' ? 'other-case' : 'case1' },
+        });
+      }
+      return Promise.resolve(containedCase(['a1', 'a2', 'a3', 'a4']));
+    });
+    const soUpdate = jest.fn().mockResolvedValue({ id: 'case1' });
+    const soDelete = jest.fn().mockResolvedValue({});
+    const transportRequest = jest.fn().mockResolvedValue({ body: { alerts: [] } });
+    const context = makeContext({
+      soClient: { get: soGet, update: soUpdate, delete: soDelete },
+      esClient: { transport: { request: transportRequest } },
+    });
+    const response = httpServerMock.createResponseFactory();
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { status: 'Closed', acknowledgeAlerts: false },
+    });
+
+    await handler(context, request, response);
+
+    // Only case1's own overrides (a1/a2/a3) are deleted; a4 (owned by other-case) is left in place.
+    const deletedIds = soDelete.mock.calls
+      .filter((c: any[]) => c[0] === 'tlsoc-alert-override')
+      .map((c: any[]) => c[1])
+      .sort();
+    expect(deletedIds).toEqual(['a1', 'a2', 'a3']);
+    expect(deletedIds).not.toContain('a4');
+    expect(response.ok).toHaveBeenCalled();
+  });
+});
+
+describe('registerCaseRoutes — PUT reopen (Closed → In Progress) creates display overrides (PROB-29)', () => {
+  let router: ReturnType<typeof httpServiceMock.createRouter>;
+  const logger = loggerMock.create();
+  const statusAuth = authWithRoles(['tlsoc_l1']);
+
+  const closedCase = (linkedAlertIds: string[]) => ({
+    id: 'case1',
+    attributes: {
+      title: 'Brute force from 10.8.0.10',
+      description: 'd',
+      status: 'Closed',
+      severity: 'high',
+      assignee: null,
+      tags: [],
+      linkedAlertIds,
+      linkedFindingIds: [],
+      comments: [],
+      activity: [],
+      createdAt: '2026-07-18T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+      closedAt: '2026-07-19T00:00:00.000Z',
+    },
+  });
+
+  beforeEach(() => {
+    router = httpServiceMock.createRouter();
+    jest.clearAllMocks();
+  });
+
+  const setup = (opts: { linked?: string[]; listAlerts?: any[]; createImpl?: () => Promise<any> }) => {
+    registerCaseRoutes(router, logger, statusAuth);
+    const handler = findHandler(router, 'put', '/api/tlsoc/cases/{id}');
+    const linked = opts.linked ?? ['a1', 'a2', 'a3'];
+    const soGet = jest.fn().mockResolvedValue(closedCase(linked));
+    const soUpdate = jest.fn().mockResolvedValue({ id: 'case1' });
+    const soCreate = opts.createImpl
+      ? jest.fn().mockImplementation(opts.createImpl)
+      : jest.fn().mockResolvedValue({ id: 'ok' });
+    const soDelete = jest.fn().mockResolvedValue({});
+    const transportRequest = jest.fn().mockImplementation(({ method, path }: any) => {
+      if (method === 'GET' && path === ALERTS_LIST_PATH) {
+        return Promise.resolve({
+          body: {
+            alerts: opts.listAlerts ?? [
+              rawAlert('a1', 'm1', 'ACKNOWLEDGED'),
+              rawAlert('a2', 'm1', 'ACKNOWLEDGED'),
+              rawAlert('a3', 'm2', 'ACTIVE'),
+            ],
+          },
+        });
+      }
+      return Promise.resolve({ body: {} });
+    });
+    const context = makeContext({
+      soClient: { get: soGet, update: soUpdate, create: soCreate, delete: soDelete },
+      esClient: { transport: { request: transportRequest } },
+    });
+    const response = httpServerMock.createResponseFactory();
+    return { handler, soGet, soUpdate, soCreate, soDelete, transportRequest, context, response };
+  };
+
+  it('upserts an override ONLY for the ACKNOWLEDGED linked alerts and records the audit entry', async () => {
+    const { handler, soCreate, soUpdate, context, response } = setup({});
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { status: 'In Progress' },
+    });
+
+    await handler(context, request, response);
+
+    // a1 + a2 are ACKNOWLEDGED → overrides; a3 is ACTIVE → NOT overridden.
+    expect(soCreate).toHaveBeenCalledTimes(2);
+    const createdIds = soCreate.mock.calls.map((c: any[]) => c[2].id);
+    expect(createdIds).toEqual(['a1', 'a2']);
+    for (const call of soCreate.mock.calls) {
+      expect(call[0]).toBe('tlsoc-alert-override');
+      expect(call[2].overwrite).toBe(true);
+      expect(call[1]).toMatchObject({ caseId: 'case1', caseName: 'Brute force from 10.8.0.10' });
+    }
+    expect(soCreate.mock.calls[0][1].alertId).toBe('a1');
+
+    const patch = soUpdate.mock.calls[0][2];
+    expect(patch.status).toBe('In Progress');
+    expect(patch.closedAt).toBeNull(); // reopen clears closedAt
+    const summaries = patch.activity.map((a: any) => [a.type, a.summary]);
+    expect(summaries).toEqual([
+      ['status_changed', 'Status changed from Closed to In Progress'],
+      ['alerts_reopened', 'Reactivated 2 linked alerts on reopen'],
+    ]);
+    expect(response.ok).toHaveBeenCalledWith({ body: { id: 'case1' } });
+  });
+
+  it('never overrides ACTIVE or COMPLETED alerts (no override, no audit entry when none acknowledged)', async () => {
+    const { handler, soCreate, soUpdate, context, response } = setup({
+      listAlerts: [rawAlert('a1', 'm1', 'ACTIVE'), rawAlert('a2', 'm1', 'COMPLETED')],
+      linked: ['a1', 'a2'],
+    });
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { status: 'In Progress' },
+    });
+
+    await handler(context, request, response);
+
+    expect(soCreate).not.toHaveBeenCalled();
+    const patch = soUpdate.mock.calls[0][2];
+    expect(patch.activity.map((a: any) => a.type)).toEqual(['status_changed']);
+    expect(response.ok).toHaveBeenCalled();
+  });
+
+  it('a failed override write never blocks the reopen and is recorded honestly', async () => {
+    const { handler, soUpdate, context, response } = setup({
+      createImpl: () => Promise.reject(new Error('so write conflict')),
+    });
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { status: 'In Progress' },
+    });
+
+    await handler(context, request, response);
+
+    const patch = soUpdate.mock.calls[0][2];
+    expect(patch.status).toBe('In Progress'); // reopen still lands
+    expect(patch.activity.map((a: any) => a.summary)).toEqual([
+      'Status changed from Closed to In Progress',
+      'Reactivated 0 linked alerts on reopen (2 could not be reactivated)',
+    ]);
+    expect(response.ok).toHaveBeenCalled();
+  });
+
+  it('a failed alert LISTING never blocks the reopen (override step skipped)', async () => {
+    const { handler, soCreate, soUpdate, context, response } = setup({});
+    (context.core.opensearch.client.asCurrentUser.transport.request as jest.Mock).mockRejectedValue(
+      new Error('alerting API down')
+    );
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { status: 'In Progress' },
+    });
+
+    await handler(context, request, response);
+
+    expect(soCreate).not.toHaveBeenCalled();
+    const patch = soUpdate.mock.calls[0][2];
+    expect(patch.status).toBe('In Progress');
+    expect(patch.activity.map((a: any) => a.type)).toEqual(['status_changed']);
+    expect(response.ok).toHaveBeenCalled();
+  });
+
+  it('reopening a case with no linked alerts creates no overrides', async () => {
+    const { handler, soCreate, transportRequest, context, response } = setup({ linked: [] });
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { status: 'In Progress' },
+    });
+
+    await handler(context, request, response);
+
+    expect(soCreate).not.toHaveBeenCalled();
+    expect(transportRequest).not.toHaveBeenCalled();
+    expect(response.ok).toHaveBeenCalled();
+  });
 });
