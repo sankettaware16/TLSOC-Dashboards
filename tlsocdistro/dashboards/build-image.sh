@@ -5,10 +5,10 @@
 # Run it on a build machine (Node 22, ~8 GB RAM, the OSD repo checked out), then copy the resulting
 # image to your deployment host (or push it to a registry).
 #
-# Usage:   bash dashboards/build-image.sh [image:tag]     (default tlsoc-dashboards:1.2.2)
+# Usage:   bash dashboards/build-image.sh [image:tag]     (default tlsoc-dashboards:1.2.3)
 set -euo pipefail
 
-IMAGE="${1:-${TLSOC_DASHBOARDS_IMAGE:-tlsoc-dashboards:1.2.2}}"
+IMAGE="${1:-${TLSOC_DASHBOARDS_IMAGE:-tlsoc-dashboards:1.2.3}}"
 # tlsocdistro/dashboards/ -> repo root (two levels up)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
