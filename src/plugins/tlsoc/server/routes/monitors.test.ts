@@ -6,8 +6,12 @@
 import { coreMock, httpServerMock, httpServiceMock } from '../../../../core/server/mocks';
 import { loggerMock } from '@osd/logging/target/mocks';
 import { HttpAuth, RequestHandler } from '../../../../core/server';
-import { needsExecutionTargetSync, registerMonitorRoutes } from './monitors';
+import { needsExecutionTargetSync, normalizeRuleTags, registerMonitorRoutes } from './monitors';
 import { bootstrapSeenValues, deleteSeenValuesDoc } from '../lib/new_terms_state';
+import {
+  applyExceptionsToLucene,
+  ExceptionEntry,
+} from '../../common/detection/exceptions';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -557,6 +561,224 @@ describe('registerMonitorRoutes', () => {
         body: { message: expect.stringContaining('no indices currently match') },
       });
       expect(monitorCreateCalls(transportRequest)).toHaveLength(0);
+    });
+
+    it('the FULL executed string is validated: exceptions ride the ` AND NOT (…)` fragment (D9 belt-and-braces)', async () => {
+      const exceptions = [{ field: 'source.ip', op: 'equals', values: ['10.0.0.1'] }];
+      const { handler, context, response, transportRequest } = createSetup({
+        valid: true,
+        _shards: { total: 1, successful: 1, failed: 0 },
+      });
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'custom_query', rule: { ...cqRule, exceptions } },
+      });
+
+      await handler(context, request, response);
+
+      const validateCall = transportRequest.mock.calls.find((c: any[]) =>
+        String(c[0].path).includes('/_validate/query')
+      );
+      expect(validateCall).toBeTruthy();
+      const validated = validateCall![0].body.query.query_string.query;
+      // The exact executed string, not just the pure translation:
+      expect(validated).toBe(
+        applyExceptionsToLucene('url.path:*admin*', exceptions as ExceptionEntry[])
+      );
+      expect(validated).toContain('AND NOT');
+      expect(validated).toContain('10.0.0.1');
+      expect(response.ok).toHaveBeenCalled();
+    });
+  });
+
+  describe('suppression save gate + routing (v1.2.3 D9, W4 serial integration)', () => {
+    const suppressedStateless = (groupBy: string[]) => ({
+      name: 'SSH brute force',
+      severity: 'high',
+      index: 'security-logs',
+      group: {
+        logic: 'AND',
+        conditions: [{ field: 'event.action', operator: 'equals', value: 'ssh_login_failed' }],
+      },
+      suppression: { groupBy, window: { value: 5, unit: 'MINUTES' } },
+      groupBy, // the required suppression mirror (validated by the compiler)
+    });
+
+    /** Cluster truth: source.ip is ip; user.agent is analyzed text WITH a keyword subfield;
+     * message is analyzed text WITHOUT one. */
+    const capsBody = {
+      indices: ['security-logs'],
+      fields: {
+        'source.ip': { ip: { type: 'ip', searchable: true, aggregatable: true } },
+        'user.agent': { text: { type: 'text', searchable: true, aggregatable: false } },
+        'user.agent.keyword': {
+          keyword: { type: 'keyword', searchable: true, aggregatable: true },
+        },
+        message: { text: { type: 'text', searchable: true, aggregatable: false } },
+      },
+    };
+
+    function createSetup(fieldCapsBody: any) {
+      registerMonitorRoutes(router, logger, writerAuth);
+      const handler = findHandler(router, 'post', '/api/tlsoc/detection/monitors');
+      const soFind = jest.fn().mockResolvedValue({ saved_objects: [] });
+      const soCreate = jest.fn().mockResolvedValue({ id: 'so1' });
+      const transportRequest = jest.fn().mockImplementation(({ path }: any) =>
+        String(path).includes('/_validate/query')
+          ? Promise.resolve({
+              body: { valid: true, _shards: { total: 1, successful: 1, failed: 0 } },
+            })
+          : Promise.resolve({ body: { _id: 'm1' } })
+      );
+      const fieldCaps = jest.fn().mockResolvedValue({ body: fieldCapsBody });
+      const catIndices = jest.fn().mockResolvedValue({ body: [{ index: 'security-logs-1' }] });
+      const context = makeContext({
+        soClient: { find: soFind, create: soCreate },
+        esClient: { transport: { request: transportRequest }, fieldCaps },
+      });
+      // `cat` is getter-only on the client mock — assign INTO it rather than replacing it.
+      Object.assign(context.core.opensearch.client.asCurrentUser.cat, { indices: catIndices });
+      const response = httpServerMock.createResponseFactory();
+      return { handler, context, response, transportRequest, fieldCaps, soCreate, catIndices };
+    }
+
+    const monitorCreateCalls = (transportRequest: jest.Mock) =>
+      transportRequest.mock.calls.filter(
+        (c: any[]) => c[0].method === 'POST' && c[0].path === '/_plugins/_alerting/monitors'
+      );
+
+    it('a suppressed stateless rule compiles to a BUCKET monitor (the registry dispatch)', async () => {
+      const { handler, context, response, transportRequest } = createSetup(capsBody);
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'stateless', rule: suppressedStateless(['source.ip']) },
+      });
+
+      await handler(context, request, response);
+
+      const creates = monitorCreateCalls(transportRequest);
+      expect(creates).toHaveLength(1);
+      expect(creates[0][0].body.monitor_type).toBe('bucket_level_monitor');
+      expect(response.ok).toHaveBeenCalled();
+    });
+
+    it('a suppressed stateless rule on a PATTERNED index does NOT alias-route (bucket monitors take patterns)', async () => {
+      const { handler, context, response, transportRequest, catIndices } = createSetup({
+        ...capsBody,
+        indices: ['security-logs-2026.07.20', 'security-logs-2026.07.21'],
+      });
+      const rule = { ...suppressedStateless(['source.ip']), index: 'security-logs-*' };
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'stateless', rule },
+      });
+
+      await handler(context, request, response);
+
+      expect(catIndices).not.toHaveBeenCalled(); // no concrete-index resolution
+      const aliasCalls = transportRequest.mock.calls.filter(
+        (c: any[]) => c[0].path === '/_aliases'
+      );
+      expect(aliasCalls).toHaveLength(0);
+      const creates = monitorCreateCalls(transportRequest);
+      expect(creates).toHaveLength(1);
+      expect(creates[0][0].body.monitor_type).toBe('bucket_level_monitor');
+      expect(response.ok).toHaveBeenCalled();
+    });
+
+    it('an analyzed-text group-by 400s BY NAME pointing at its keyword subfield; no monitor is created', async () => {
+      const { handler, context, response, transportRequest } = createSetup(capsBody);
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'stateless', rule: suppressedStateless(['user.agent']) },
+      });
+
+      await handler(context, request, response);
+
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining('"user.agent"') },
+      });
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining('user.agent.keyword') },
+      });
+      expect(monitorCreateCalls(transportRequest)).toHaveLength(0);
+    });
+
+    it('analyzed text WITHOUT a keyword subfield 400s naming the field, suggesting a keyword field', async () => {
+      const { handler, context, response, transportRequest } = createSetup(capsBody);
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'stateless', rule: suppressedStateless(['message']) },
+      });
+
+      await handler(context, request, response);
+
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining('no keyword subfield') },
+      });
+      expect(monitorCreateCalls(transportRequest)).toHaveLength(0);
+    });
+
+    it('zero matching concrete indices 400 with the "No indices currently match" message', async () => {
+      const { handler, context, response, transportRequest } = createSetup({
+        indices: [],
+        fields: {},
+      });
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'stateless', rule: suppressedStateless(['source.ip']) },
+      });
+
+      await handler(context, request, response);
+
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining('No indices currently match') },
+      });
+      expect(monitorCreateCalls(transportRequest)).toHaveLength(0);
+    });
+
+    it('a suppressed custom_query rule runs BOTH gates: query validation AND the group-by gate', async () => {
+      const { handler, context, response, transportRequest, fieldCaps } = createSetup(capsBody);
+      const rule = {
+        name: 'Admin probe (suppressed)',
+        severity: 'high',
+        index: 'security-logs',
+        language: 'lucene',
+        queryText: 'url.path:*admin*',
+        suppression: { groupBy: ['source.ip'], window: { value: 5, unit: 'MINUTES' } },
+        groupBy: ['source.ip'],
+      };
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'custom_query', rule },
+      });
+
+      await handler(context, request, response);
+
+      const validateCall = transportRequest.mock.calls.find((c: any[]) =>
+        String(c[0].path).includes('/_validate/query')
+      );
+      expect(validateCall).toBeTruthy();
+      expect(fieldCaps).toHaveBeenCalledWith(
+        expect.objectContaining({
+          index: 'security-logs',
+          fields: expect.arrayContaining(['source.ip', 'source.ip.keyword']),
+        })
+      );
+      const creates = monitorCreateCalls(transportRequest);
+      expect(creates).toHaveLength(1);
+      expect(creates[0][0].body.monitor_type).toBe('bucket_level_monitor');
+      expect(response.ok).toHaveBeenCalled();
+    });
+
+    it('an UNsuppressed stateless rule never touches field_caps (the gate is suppression-only)', async () => {
+      const { handler, context, response, fieldCaps } = createSetup(capsBody);
+      const { suppression, groupBy, ...rest } = suppressedStateless(['source.ip']);
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: { mode: 'stateless', rule: rest },
+      });
+
+      await handler(context, request, response);
+
+      expect(fieldCaps).not.toHaveBeenCalled();
+      expect(response.ok).toHaveBeenCalled();
     });
   });
 
@@ -1207,6 +1429,63 @@ describe('registerMonitorRoutes', () => {
       expect(body.id).toBe('m2');
     });
 
+    it('the LOOKUP→INLINE direction swaps too: a shrunken list re-compiles doc-level via a fresh monitor (W3 residual)', async () => {
+      // The saved rule ran as the LOOKUP bucket monitor; its list shrank under the inline cap,
+      // so the SAME (immutable) mode now compiles to a doc-level monitor — the cross-kind swap
+      // must fire in THIS direction as well: never a PUT across monitor_type.
+      const { handler, context, response, transportRequest, soCreate } = updateSetup(
+        ['evil.com', 'bad.io'],
+        'bucket_level_monitor'
+      );
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        params: { soId: 'so1' },
+        body: { mode: 'indicator_match', rule: imRule({ listMode: 'lookup' }) },
+      });
+
+      await handler(context, request, response);
+
+      // No PUT ever touched the old bucket monitor.
+      expect(
+        transportRequest.mock.calls.some(
+          (c: any[]) => c[0].method === 'PUT' && String(c[0].path).startsWith(MONITORS)
+        )
+      ).toBe(false);
+
+      // The replacement is the INLINE doc-level shape with the values baked in.
+      const postIdx = transportRequest.mock.calls.findIndex(
+        (c: any[]) => c[0].method === 'POST' && c[0].path === MONITORS
+      );
+      expect(postIdx).toBeGreaterThanOrEqual(0);
+      const posted = transportRequest.mock.calls[postIdx][0].body;
+      expect(posted.monitor_type).toBe('doc_level_monitor');
+      expect(posted.inputs[0].doc_level_input.queries[0].query).toBe(
+        'dns.question.name:("evil.com" OR "bad.io")'
+      );
+
+      // SO records the replacement id AND the re-picked listMode.
+      expect(soCreate).toHaveBeenCalledWith(
+        TYPE,
+        expect.objectContaining({
+          monitorId: 'm2',
+          rule: expect.objectContaining({ listMode: 'inline' }),
+        }),
+        { id: 'so1', overwrite: true }
+      );
+
+      // The superseded bucket monitor is deleted only AFTER both writes (BLOCKING-1 order).
+      const deleteIdx = transportRequest.mock.calls.findIndex(
+        (c: any[]) => c[0].method === 'DELETE' && c[0].path === `${MONITORS}/m1`
+      );
+      expect(deleteIdx).toBeGreaterThanOrEqual(0);
+      expect(transportRequest.mock.invocationCallOrder[deleteIdx]).toBeGreaterThan(
+        transportRequest.mock.invocationCallOrder[postIdx]
+      );
+      expect(transportRequest.mock.invocationCallOrder[deleteIdx]).toBeGreaterThan(
+        soCreate.mock.invocationCallOrder[0]
+      );
+      expect((response.ok as jest.Mock).mock.calls[0][0].body.id).toBe('m2');
+    });
+
     it('a same-kind update still PUTs the existing monitor in place (no swap, no delete)', async () => {
       const { handler, context, response, transportRequest, soCreate } = updateSetup(
         ['evil.com', 'bad.io'],
@@ -1375,6 +1654,419 @@ describe('registerMonitorRoutes', () => {
     });
   });
 
+  describe('LIST — D8 additive fields + honest health (v1.2.3 W4a)', () => {
+    const MONITORS = '/_plugins/_alerting/monitors';
+
+    /** Two rules: m1 enabled (with threat/tags/riskScore), m2 disabled. */
+    const soFindResult = () => ({
+      saved_objects: [
+        {
+          id: 'so1',
+          updated_at: '2026-07-20T10:00:00.000Z',
+          attributes: {
+            name: 'A',
+            mode: 'stateful',
+            severity: 'high',
+            monitorId: 'm1',
+            enabled: true,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            rule: {
+              ...statefulRule,
+              threat: [{ framework: 'MITRE ATT&CK', technique: [{ id: 'T1110' }] }],
+              riskScore: 73,
+              tags: ['auth', 'brute-force'],
+            },
+          },
+        },
+        {
+          id: 'so2',
+          updated_at: '2026-07-19T10:00:00.000Z',
+          attributes: {
+            name: 'B',
+            mode: 'ppl',
+            severity: 'low',
+            monitorId: 'm2',
+            enabled: false,
+            createdAt: '2026-01-02T00:00:00.000Z',
+            rule: { name: 'B', index: 'security-logs', pplText: 'source = x | stats count() as c' },
+          },
+        },
+      ],
+    });
+
+    /** Transport answering all three engine reads; each optionally made to throw. */
+    function listSetup(
+      overrides: {
+        statsThrows?: boolean;
+        alertsThrows?: boolean;
+        alerts?: any[];
+        jobsInfo?: Record<string, any>;
+      } = {}
+    ) {
+      registerMonitorRoutes(router, logger, writerAuth);
+      const handler = findHandler(router, 'get', '/api/tlsoc/detection/monitors');
+      const soFind = jest.fn().mockResolvedValue(soFindResult());
+      const transportRequest = jest.fn().mockImplementation(({ method, path }: any) => {
+        if (method === 'POST' && path === `${MONITORS}/_search`) {
+          return Promise.resolve({
+            body: {
+              hits: {
+                hits: [
+                  {
+                    _id: 'm1',
+                    _source: {
+                      monitor: { enabled: true, enabled_time: 111, last_update_time: 222 },
+                    },
+                  },
+                  {
+                    _id: 'm2',
+                    _source: {
+                      monitor: { enabled: false, enabled_time: null, last_update_time: 333 },
+                    },
+                  },
+                ],
+              },
+            },
+          });
+        }
+        if (path === '/_plugins/_alerting/stats') {
+          if (overrides.statsThrows) return Promise.reject(new Error('stats unavailable'));
+          return Promise.resolve({
+            body: {
+              nodes: {
+                node1: {
+                  jobs_info: overrides.jobsInfo ?? {
+                    m1: { last_execution_time: 1784550011887, running_on_time: true },
+                  },
+                },
+              },
+            },
+          });
+        }
+        if (path === `${MONITORS}/alerts`) {
+          if (overrides.alertsThrows) return Promise.reject(new Error('alerts unavailable'));
+          return Promise.resolve({ body: { alerts: overrides.alerts ?? [] } });
+        }
+        return Promise.resolve({ body: {} });
+      });
+      const context = makeContext({
+        soClient: { find: soFind },
+        esClient: { transport: { request: transportRequest } },
+      });
+      const response = httpServerMock.createResponseFactory();
+      return { handler, context, response, transportRequest };
+    }
+
+    const rulesFrom = (response: any) =>
+      (response.ok as jest.Mock).mock.calls[0][0].body.rules as any[];
+    const bySoId = (rules: any[]) => Object.fromEntries(rules.map((r) => [r.soId, r]));
+
+    it('rows carry threat/riskScore/tags/updatedAt/sigmaEligible — read from data already in memory', async () => {
+      const { handler, context, response } = listSetup();
+      await handler(context, httpServerMock.createOpenSearchDashboardsRequest(), response);
+
+      const rows = bySoId(rulesFrom(response));
+      expect(rows.so1.threat).toEqual([
+        { framework: 'MITRE ATT&CK', technique: [{ id: 'T1110' }] },
+      ]);
+      expect(rows.so1.riskScore).toBe(73);
+      expect(rows.so1.tags).toEqual(['auth', 'brute-force']);
+      expect(rows.so1.updatedAt).toBe('2026-07-20T10:00:00.000Z');
+      expect(rows.so1.sigmaEligible).toBe(true); // plain stateful → Sigma-exportable
+      expect(rows.so2.sigmaEligible).toBe(false); // ppl → native only
+      expect(rows.so2.threat).toBeUndefined();
+      expect(rows.so2.tags).toBeUndefined();
+    });
+
+    it('?includeRule=true returns the full rule; without it no rule key exists', async () => {
+      const { handler, context, response } = listSetup();
+      await handler(
+        context,
+        httpServerMock.createOpenSearchDashboardsRequest({ query: { includeRule: 'true' } }),
+        response
+      );
+      const withRule = bySoId(rulesFrom(response));
+      expect(withRule.so1.rule).toEqual(
+        expect.objectContaining({ name: 'Brute force', riskScore: 73 })
+      );
+
+      const second = listSetup();
+      await second.handler(
+        second.context,
+        httpServerMock.createOpenSearchDashboardsRequest(),
+        second.response
+      );
+      const withoutRule = bySoId(rulesFrom(second.response));
+      expect('rule' in withoutRule.so1).toBe(false);
+    });
+
+    it('health: last run from stats, FAILING from an un-ended ERROR alert, OFF for disabled', async () => {
+      const { handler, context, response } = listSetup({
+        alerts: [
+          {
+            id: 'error-alert-x1', // real engine id prefix — tolerated, never parsed
+            monitor_id: 'm1',
+            state: 'ERROR',
+            severity: '', // real engine quirk — tolerated
+            error_message: 'IndexNotFoundException[no such index [gone]]',
+            start_time: 1784129651894,
+            end_time: null,
+          },
+        ],
+      });
+      await handler(context, httpServerMock.createOpenSearchDashboardsRequest(), response);
+
+      const rows = bySoId(rulesFrom(response));
+      expect(rows.so1.health).toEqual({
+        status: 'failing',
+        enabled: true,
+        lastRun: 1784550011887,
+        lastError: { message: 'IndexNotFoundException[no such index [gone]]', at: 1784129651894 },
+        enabledTime: 111,
+        lastUpdateTime: 222,
+      });
+      expect(rows.so2.health).toEqual(
+        expect.objectContaining({ status: 'off', enabled: false, lastUpdateTime: 333 })
+      );
+      // NEVER a 'succeeded' claim anywhere in the model.
+      rulesFrom(response).forEach((r) =>
+        expect(['failing', 'ok-unverified', 'off']).toContain(r.health.status)
+      );
+    });
+
+    it('an ENDED ERROR alert (recovered) leaves the rule ok-unverified', async () => {
+      const { handler, context, response } = listSetup({
+        alerts: [
+          {
+            id: 'error-alert-x1',
+            monitor_id: 'm1',
+            state: 'ERROR',
+            severity: '',
+            error_message: 'was broken, then recovered',
+            start_time: 100,
+            end_time: 200,
+          },
+        ],
+      });
+      await handler(context, httpServerMock.createOpenSearchDashboardsRequest(), response);
+      expect(bySoId(rulesFrom(response)).so1.health.status).toBe('ok-unverified');
+    });
+
+    it('stats AND alerts failures both degrade to undefined — the list still 200s with health (PROB-19)', async () => {
+      const { handler, context, response } = listSetup({ statsThrows: true, alertsThrows: true });
+      await handler(context, httpServerMock.createOpenSearchDashboardsRequest(), response);
+
+      expect(response.ok).toHaveBeenCalled();
+      const rows = bySoId(rulesFrom(response));
+      expect(rows.so1.health.status).toBe('ok-unverified');
+      expect(rows.so1.health.lastRun).toBeUndefined();
+      expect(rows.so1.health.lastError).toBeUndefined();
+      expect(rows.so2.health.status).toBe('off');
+      expect(logger.warn).toHaveBeenCalled();
+    });
+  });
+
+  describe('rule tags (v1.2.3 D8)', () => {
+    describe('normalizeRuleTags (pure contract)', () => {
+      it('absent input → {} (the field stays absent)', () => {
+        expect(normalizeRuleTags(undefined)).toEqual({});
+        expect(normalizeRuleTags(null)).toEqual({});
+      });
+
+      it('trims, drops whitespace-only entries, dedupes preserving order', () => {
+        expect(normalizeRuleTags([' auth ', 'auth', '  ', 'web', 'auth'])).toEqual({
+          tags: ['auth', 'web'],
+        });
+      });
+
+      it('rejects a non-array and non-string entries BY NAME', () => {
+        expect(normalizeRuleTags('auth').error).toContain('array of strings');
+        expect(normalizeRuleTags(['ok', 42]).error).toContain('rule.tags[1]');
+      });
+
+      it('rejects a tag over 50 characters BY NAME', () => {
+        const long = 'x'.repeat(51);
+        expect(normalizeRuleTags([long]).error).toContain('longer than 50');
+      });
+
+      it('rejects more than 20 tags BY NAME (after dedupe)', () => {
+        const many = Array.from({ length: 21 }, (_, i) => `tag${i}`);
+        expect(normalizeRuleTags(many).error).toContain('at most 20');
+        // Exactly 20 (post-dedupe) passes.
+        expect(normalizeRuleTags([...many.slice(0, 20), 'tag0']).tags).toHaveLength(20);
+      });
+    });
+
+    it('CREATE normalizes rule.tags into the persisted SO (trim + dedupe)', async () => {
+      registerMonitorRoutes(router, logger, writerAuth);
+      const handler = findHandler(router, 'post', '/api/tlsoc/detection/monitors');
+      const soFind = jest.fn().mockResolvedValue({ saved_objects: [] });
+      const soCreate = jest.fn().mockResolvedValue({ id: 'so1' });
+      const transportRequest = jest.fn().mockResolvedValue({ body: { _id: 'm1' } });
+      const context = makeContext({
+        soClient: { find: soFind, create: soCreate },
+        esClient: { transport: { request: transportRequest } },
+      });
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: {
+          mode: 'stateful',
+          rule: { ...statefulRule, tags: [' auth ', 'auth', 'brute-force'] },
+        },
+      });
+      const response = httpServerMock.createResponseFactory();
+
+      await handler(context, request, response);
+
+      expect(soCreate).toHaveBeenCalledWith(
+        TYPE,
+        expect.objectContaining({
+          rule: expect.objectContaining({ tags: ['auth', 'brute-force'] }),
+        })
+      );
+      expect(response.ok).toHaveBeenCalled();
+    });
+
+    it('CREATE 400s a tag violation BY NAME, before touching any client', async () => {
+      registerMonitorRoutes(router, logger, writerAuth);
+      const handler = findHandler(router, 'post', '/api/tlsoc/detection/monitors');
+      const soFind = jest.fn().mockResolvedValue({ saved_objects: [] });
+      const transportRequest = jest.fn();
+      const context = makeContext({
+        soClient: { find: soFind },
+        esClient: { transport: { request: transportRequest } },
+      });
+      const request = httpServerMock.createOpenSearchDashboardsRequest({
+        body: {
+          mode: 'stateful',
+          rule: { ...statefulRule, tags: Array.from({ length: 21 }, (_, i) => `t${i}`) },
+        },
+      });
+      const response = httpServerMock.createResponseFactory();
+
+      await handler(context, request, response);
+
+      expect(response.customError).toHaveBeenCalledWith({
+        statusCode: 400,
+        body: { message: expect.stringContaining('at most 20') },
+      });
+      expect(transportRequest).not.toHaveBeenCalled();
+    });
+
+    describe('_tags route — the minimal-touch tag write', () => {
+      function tagsSetup() {
+        registerMonitorRoutes(router, logger, writerAuth);
+        const handler = findHandler(
+          router,
+          'post',
+          '/api/tlsoc/detection/monitors/{soId}/_tags'
+        );
+        const soGet = jest.fn().mockResolvedValue({
+          id: 'so1',
+          attributes: {
+            monitorId: 'm1',
+            name: 'Rule',
+            mode: 'stateful',
+            enabled: true,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            rule: { ...statefulRule, tags: ['old'] },
+          },
+        });
+        const soCreate = jest.fn().mockResolvedValue({ id: 'so1' });
+        const transportRequest = jest.fn();
+        const context = makeContext({
+          soClient: { get: soGet, create: soCreate },
+          esClient: { transport: { request: transportRequest } },
+        });
+        const response = httpServerMock.createResponseFactory();
+        return { handler, context, response, soGet, soCreate, transportRequest };
+      }
+
+      it('REPLACES rule.tags with the normalized list and NEVER touches the monitor', async () => {
+        const { handler, context, response, soCreate, transportRequest } = tagsSetup();
+        const request = httpServerMock.createOpenSearchDashboardsRequest({
+          params: { soId: 'so1' },
+          body: { tags: [' auth ', 'web', 'auth'] },
+        });
+
+        await handler(context, request, response);
+
+        expect(soCreate).toHaveBeenCalledWith(
+          TYPE,
+          expect.objectContaining({
+            monitorId: 'm1',
+            rule: expect.objectContaining({ tags: ['auth', 'web'] }),
+          }),
+          { id: 'so1', overwrite: true }
+        );
+        expect(transportRequest).not.toHaveBeenCalled(); // no recompile, no monitor write
+        expect(response.ok).toHaveBeenCalledWith({ body: { tags: ['auth', 'web'] } });
+      });
+
+      it('an empty list REMOVES the field (absent = no tags, the zero-migration default)', async () => {
+        const { handler, context, response, soCreate } = tagsSetup();
+        const request = httpServerMock.createOpenSearchDashboardsRequest({
+          params: { soId: 'so1' },
+          body: { tags: [] },
+        });
+
+        await handler(context, request, response);
+
+        const written = soCreate.mock.calls[0][1];
+        expect('tags' in written.rule).toBe(false);
+        expect(response.ok).toHaveBeenCalledWith({ body: { tags: [] } });
+      });
+
+      it('400s a violation BY NAME before reading the SO', async () => {
+        const { handler, context, response, soGet } = tagsSetup();
+        const request = httpServerMock.createOpenSearchDashboardsRequest({
+          params: { soId: 'so1' },
+          body: { tags: ['x'.repeat(51)] },
+        });
+
+        await handler(context, request, response);
+
+        expect(response.badRequest).toHaveBeenCalledWith({
+          body: { message: expect.stringContaining('longer than 50') },
+        });
+        expect(soGet).not.toHaveBeenCalled();
+      });
+
+      it('denies a caller without a DETECTION_WRITERS role', async () => {
+        registerMonitorRoutes(router, logger, authWithRoles(['tlsoc_l1']));
+        const handler = findHandler(
+          router,
+          'post',
+          '/api/tlsoc/detection/monitors/{soId}/_tags'
+        );
+        const response = httpServerMock.createResponseFactory();
+        await handler(
+          makeContext(),
+          httpServerMock.createOpenSearchDashboardsRequest({
+            params: { soId: 'so1' },
+            body: { tags: ['a'] },
+          }),
+          response
+        );
+        expect(response.forbidden).toHaveBeenCalled();
+      });
+
+      it('404s an unknown soId', async () => {
+        const { handler, context, response } = tagsSetup();
+        (context.core.savedObjects.client.get as jest.Mock).mockRejectedValue(
+          new Error('not found')
+        );
+        const request = httpServerMock.createOpenSearchDashboardsRequest({
+          params: { soId: 'ghost' },
+          body: { tags: ['a'] },
+        });
+
+        await handler(context, request, response);
+
+        expect(response.notFound).toHaveBeenCalled();
+      });
+    });
+  });
+
   describe('needsExecutionTargetSync — the drift-repair selection predicate (W3 review)', () => {
     const attrs = (mode: string, rule: Record<string, unknown> = {}) =>
       ({ mode, rule, name: 'R', severity: 'high', monitorId: 'm1', createdAt: '' } as any);
@@ -1402,6 +2094,14 @@ describe('registerMonitorRoutes', () => {
 
     it('skips (never crashes on) an unregistered mode', () => {
       expect(needsExecutionTargetSync(attrs('sequence'))).toBe(false);
+    });
+
+    it('excludes SUPPRESSED doc-kind rules — they run bucket monitors (v1.2.3 D9)', () => {
+      const suppression = { groupBy: ['source.ip'], window: { value: 5, unit: 'MINUTES' } };
+      expect(needsExecutionTargetSync(attrs('stateless', { suppression }))).toBe(false);
+      expect(needsExecutionTargetSync(attrs('custom_query', { suppression }))).toBe(false);
+      // Without suppression they still sync (the predicate's original contract).
+      expect(needsExecutionTargetSync(attrs('stateless'))).toBe(true);
     });
   });
 });

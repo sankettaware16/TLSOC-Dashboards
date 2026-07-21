@@ -12,6 +12,11 @@ import {
   slugify,
 } from './internal';
 import { conditionGroupToLucene } from './lucene';
+import {
+  applyExceptionsToLucene,
+  exceptionsToFilterClause,
+  validateExceptions,
+} from './exceptions';
 import { buildWindow } from './window';
 import { DocLevelMonitor } from './monitor';
 import { BucketLevelMonitor, GROUPS_AGG } from './bucket_monitor';
@@ -192,6 +197,10 @@ export function assertValidIndicatorMatchRule(rule: IndicatorMatchRuleDefinition
     // (the W3 review fix-the-class sweep) — reject it by name like every other validator.
     assertValidTimeWindowUnit(rule.runEvery, 'run-every', `Indicator-match rule "${rule.name}"`);
   }
+  // v1.2.3 D9: exceptions are additive — a rule WITHOUT them validates exactly as before.
+  if (rule.exceptions !== undefined) {
+    validateExceptions(rule.exceptions, `Indicator-match rule "${rule.name}"`);
+  }
 }
 
 /**
@@ -215,7 +224,7 @@ function quoteIndicatorValue(value: string): string {
  * be the same lie with extra steps.
  */
 export function buildInlineIndicatorQuery(
-  rule: Pick<IndicatorMatchRuleDefinition, 'eventField' | 'filter' | 'name'>,
+  rule: Pick<IndicatorMatchRuleDefinition, 'eventField' | 'filter' | 'name' | 'exceptions'>,
   values: string[]
 ): string {
   if (!Array.isArray(values) || values.length === 0) {
@@ -241,10 +250,15 @@ export function buildInlineIndicatorQuery(
     }
   });
   const listClause = `${rule.eventField}:(${values.map(quoteIndicatorValue).join(' OR ')})`;
-  if (rule.filter && rule.filter.conditions.length > 0) {
-    return `${listClause} AND (${conditionGroupToLucene(rule.filter)})`;
-  }
-  return listClause;
+  // v1.2.3 D9: exceptions append the shared ` AND NOT (…)` fragment LAST (wrapping the base
+  // query first — Lucene precedence safety). A rule without exceptions builds the exact pre-D9
+  // string, byte for byte — the list-change sweep compares/rewrites THIS string, so both sides
+  // (create route + sweep) must flow the same rule object through here.
+  const base =
+    rule.filter && rule.filter.conditions.length > 0
+      ? `${listClause} AND (${conditionGroupToLucene(rule.filter)})`
+      : listClause;
+  return applyExceptionsToLucene(base, rule.exceptions);
 }
 
 /**
@@ -356,6 +370,12 @@ export function compileIndicatorLookupToBucketMonitor(
     filterClauses.push({
       query_string: { query: conditionGroupToLucene(rule.filter), analyze_wildcard: true },
     });
+  }
+  // v1.2.3 D9: exceptions append the shared {bool: {must_not}} clause LAST — a rule without
+  // them emits the exact pre-D9 clause list (the golden-pinned probe shape stays untouched).
+  const exceptionClause = exceptionsToFilterClause(rule.exceptions);
+  if (exceptionClause) {
+    filterClauses.push(exceptionClause);
   }
 
   return {

@@ -8,6 +8,7 @@ import { compileAggregationRule } from './agg_compile';
 import { BucketLevelMonitor } from './bucket_monitor';
 import { SEVERITY_TO_MONITOR_SEVERITY, assertValidTimeWindowUnit } from './internal';
 import { conditionGroupToLucene } from './lucene';
+import { exceptionsToFilterClause, validateExceptions } from './exceptions';
 import {
   Condition,
   ConditionGroup,
@@ -231,6 +232,10 @@ export function assertValidNewTermsRule(rule: NewTermsRuleDefinition): void {
       assertValidFilterCondition(condition, index, rule.name)
     );
   }
+  // v1.2.3 D9: exceptions are additive — a rule WITHOUT them validates exactly as before.
+  if (rule.exceptions !== undefined) {
+    validateExceptions(rule.exceptions, `New-terms rule "${rule.name}"`);
+  }
 }
 
 /** The effective scan cadence: `runEvery`, defaulted. The single place the default applies. */
@@ -278,6 +283,10 @@ export function compileNewTermsToMonitor(
       ],
     },
   });
+  const exceptionClause = exceptionsToFilterClause(rule.exceptions);
+  if (exceptionClause) {
+    clauses.push(exceptionClause);
+  }
 
   const input: AggregationCompileInput = {
     name: rule.name,

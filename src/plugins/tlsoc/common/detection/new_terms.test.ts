@@ -316,3 +316,56 @@ describe('compileNewTermsToMonitor — the state-doc-id contract', () => {
     );
   });
 });
+
+/*
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ * v1.2.3 W4b (D9) — ADDITIVE tests: exceptions on the new-terms compiler.
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ */
+describe('v1.2.3 D9 — new-terms exceptions (bucket must_not clause)', () => {
+  const d9Rule = (overrides: Record<string, unknown> = {}) =>
+    (({
+      name: 'first-seen country',
+      severity: 'medium',
+      index: 'fosstlsoc-logs-*',
+      termField: 'source.geo.country_iso_code',
+      historyWindow: { value: 30, unit: 'DAYS' },
+      groupBy: ['source.geo.country_iso_code'],
+      ...overrides,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as unknown) as any);
+
+  it('byte identity: exceptions absent and exceptions [] compile identically', () => {
+    const withAbsent = compileNewTermsToMonitor(d9Rule(), 'seen-so-1-source.geo.country_iso_code');
+    const withEmpty = compileNewTermsToMonitor(
+      d9Rule({ exceptions: [] }),
+      'seen-so-1-source.geo.country_iso_code'
+    );
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(withAbsent));
+  });
+
+  it('with exceptions: the clause is appended LAST — after the seen-exclusion lookup', () => {
+    const monitor = compileNewTermsToMonitor(
+      d9Rule({ exceptions: [{ field: 'user.name', op: 'equals', values: ['svc-probe'] }] }),
+      'seen-so-1-source.geo.country_iso_code'
+    );
+    const filter = monitor.inputs[0].search.query.query.bool.filter as Array<
+      Record<string, unknown>
+    >;
+    // [range, seen-exclusion, exceptions] — no pre-filter in this fixture.
+    expect(filter).toHaveLength(3);
+    expect(filter[1]).toHaveProperty(['bool', 'must_not', 0, 'terms']);
+    expect(filter[2]).toEqual({
+      bool: { must_not: [{ term: { 'user.name': 'svc-probe' } }] },
+    });
+  });
+
+  it('invalid exceptions are rejected with the New-terms label', () => {
+    expect(() =>
+      compileNewTermsToMonitor(
+        d9Rule({ exceptions: [{ field: 'f', op: 'nope', values: ['v'] }] }),
+        'seen-x'
+      )
+    ).toThrow('New-terms rule "first-seen country": exception 1 ("f") has unknown operator "nope"');
+  });
+});

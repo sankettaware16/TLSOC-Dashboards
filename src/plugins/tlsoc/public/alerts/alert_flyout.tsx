@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   EuiBadge,
   EuiButton,
@@ -20,6 +20,8 @@ import {
   EuiLink,
   EuiLoadingSpinner,
   EuiMarkdownFormat,
+  EuiPanel,
+  EuiSelect,
   EuiSpacer,
   EuiText,
   EuiTitle,
@@ -27,6 +29,10 @@ import {
 } from '@elastic/eui';
 import { CoreStart } from 'opensearch-dashboards/public';
 import { compositeSourceName } from '../../common/detection/internal';
+import {
+  ExceptionEntry,
+  MAX_EXCEPTION_ENTRIES,
+} from '../../common/detection/exceptions';
 import {
   TlsocAlert,
   buildBucketContext,
@@ -162,6 +168,19 @@ export function AlertFlyout({
   const { docs, loading, error } = useRelatedDocs(core, alert);
   const isBucket = !!(alert.bucketKeys && alert.bucketKeys.length > 0);
 
+  // v1.2.3 W4b (D9): the "Add exception" action — appends a pre-filled exception to the OWNING
+  // RULE (GET the rule by soId, append to rule.exceptions, PUT back; the route recompiles the
+  // monitor, so the exception is live immediately). NOT render-gated by role: the plugin has no
+  // caller-identity endpoint to ask cheaply (verified: users.ts serves a directory, not the
+  // caller), and the Detections app has no deep-link routing to hide it behind — so it follows
+  // the HOUSE precedent (saved_rules_list's Edit/Delete): render for everyone, and the PUT's
+  // DETECTION_WRITERS gate 403s non-writers with the server's own message, surfaced verbatim.
+  const [addingException, setAddingException] = useState(false);
+  const [exceptionChoice, setExceptionChoice] = useState(0);
+  const [exceptionSubmitting, setExceptionSubmitting] = useState(false);
+  const [exceptionError, setExceptionError] = useState<string | null>(null);
+  const [exceptionAdded, setExceptionAdded] = useState<string | null>(null);
+
   const foundDocs = useMemo(() => docs.filter((d) => d.found && d.source), [docs]);
   const firstDoc = foundDocs[0]?.source;
   const extraDocCount = Math.max(0, foundDocs.length - 1);
@@ -176,6 +195,57 @@ export function AlertFlyout({
   const runbookMarkdown = alert.rule?.note
     ? substituteFieldPlaceholders(alert.rule.note, runbookContext)
     : null;
+
+  // The add-exception candidates: exactly the highlighted field/value pairs the analyst is
+  // looking at (bucket alerts: groupBy × bucketKeys; doc alerts: the highlighted fields from
+  // the related doc). Synthetic positional labels ("group key N" — groupBy unknown) carry no
+  // real field name and are excluded.
+  const exceptionCandidates = useMemo(
+    () => highlightRows.filter((r) => !r.field.startsWith('group key ')),
+    [highlightRows]
+  );
+  const canAddException = !!alert.rule?.soId && exceptionCandidates.length > 0;
+
+  const onAddException = async () => {
+    const candidate = exceptionCandidates[exceptionChoice];
+    const soId = alert.rule?.soId;
+    if (!candidate || !soId) return;
+    setExceptionSubmitting(true);
+    setExceptionError(null);
+    try {
+      const existing = (await core.http.get(`/api/tlsoc/detection/monitors/${soId}`)) as {
+        mode: string;
+        rule: Record<string, unknown> & { exceptions?: ExceptionEntry[] };
+      };
+      const entries = existing.rule?.exceptions ?? [];
+      if (entries.length >= MAX_EXCEPTION_ENTRIES) {
+        throw new Error(
+          `The rule already has ${MAX_EXCEPTION_ENTRIES} exceptions (the cap) — edit the rule ` +
+            'to consolidate them first.'
+        );
+      }
+      const entry: ExceptionEntry = {
+        field: candidate.field,
+        op: 'equals',
+        values: [candidate.value],
+      };
+      // `enabled` deliberately omitted — the update route preserves the current enabled state.
+      await core.http.put(`/api/tlsoc/detection/monitors/${soId}`, {
+        body: JSON.stringify({
+          mode: existing.mode,
+          rule: { ...existing.rule, exceptions: [...entries, entry] },
+        }),
+      });
+      setExceptionAdded(`${candidate.field} = ${candidate.value}`);
+      setAddingException(false);
+    } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const err = e as any;
+      setExceptionError(err?.body?.message ?? err?.message ?? 'Could not add the exception');
+    } finally {
+      setExceptionSubmitting(false);
+    }
+  };
 
   const eventOriginal = firstDoc ? getPath(firstDoc, 'event.original') : undefined;
   const eventDetailRows = useMemo(() => {
@@ -444,7 +514,101 @@ export function AlertFlyout({
           <EuiFlexItem grow={false}>
             <EuiButton onClick={onCreateCase}>Create case</EuiButton>
           </EuiFlexItem>
+          {canAddException ? (
+            <EuiFlexItem grow={false}>
+              <EuiButton
+                iconType="filter"
+                data-test-subj="tlsocAddExceptionButton"
+                onClick={() => {
+                  setAddingException((v) => !v);
+                  setExceptionError(null);
+                }}
+              >
+                Add exception
+              </EuiButton>
+            </EuiFlexItem>
+          ) : null}
         </EuiFlexGroup>
+
+        {/* v1.2.3 W4b (D9): the pre-filled add-exception panel. Requires the detection-writer
+            role to save — non-writers get the server's 403 message here, verbatim. */}
+        {addingException ? (
+          <>
+            <EuiSpacer size="m" />
+            <EuiPanel hasShadow={false} hasBorder data-test-subj="tlsocAddExceptionPanel">
+              <EuiTitle size="xxs">
+                <h4>Add an exception to “{alert.rule?.name}”</h4>
+              </EuiTitle>
+              <EuiSpacer size="xs" />
+              <EuiText size="s" color="subdued">
+                <p>
+                  The rule will never alert again on events where the chosen field equals this
+                  value. Saving requires the detection-engineer role.
+                </p>
+              </EuiText>
+              <EuiSpacer size="s" />
+              <EuiSelect
+                aria-label="Exception field and value"
+                data-test-subj="tlsocAddExceptionSelect"
+                options={exceptionCandidates.map((r, i) => ({
+                  value: i,
+                  text: `${r.field} = ${r.value}`,
+                }))}
+                value={exceptionChoice}
+                onChange={(e) => setExceptionChoice(Number(e.target.value))}
+              />
+              <EuiSpacer size="s" />
+              <EuiFlexGroup gutterSize="s">
+                <EuiFlexItem grow={false}>
+                  <EuiButton
+                    fill
+                    size="s"
+                    isLoading={exceptionSubmitting}
+                    data-test-subj="tlsocAddExceptionConfirm"
+                    onClick={onAddException}
+                  >
+                    Add to rule
+                  </EuiButton>
+                </EuiFlexItem>
+                <EuiFlexItem grow={false}>
+                  <EuiButtonEmpty size="s" onClick={() => setAddingException(false)}>
+                    Cancel
+                  </EuiButtonEmpty>
+                </EuiFlexItem>
+              </EuiFlexGroup>
+              {exceptionError ? (
+                <>
+                  <EuiSpacer size="s" />
+                  <EuiCallOut
+                    size="s"
+                    color="danger"
+                    iconType="alert"
+                    title="Could not add the exception"
+                  >
+                    <p>{exceptionError}</p>
+                  </EuiCallOut>
+                </>
+              ) : null}
+            </EuiPanel>
+          </>
+        ) : null}
+        {exceptionAdded ? (
+          <>
+            <EuiSpacer size="m" />
+            <EuiCallOut
+              size="s"
+              color="success"
+              iconType="check"
+              data-test-subj="tlsocAddExceptionDone"
+              title={`Exception added: ${exceptionAdded}`}
+            >
+              <p>
+                The rule&apos;s monitor was recompiled — matching events stop alerting from its
+                next run. This alert stays until it resolves or is acknowledged.
+              </p>
+            </EuiCallOut>
+          </>
+        ) : null}
       </EuiFlyoutBody>
     </EuiFlyout>
   );

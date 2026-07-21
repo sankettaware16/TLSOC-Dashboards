@@ -44,7 +44,10 @@ export async function buildRuleRefMap(soClient: SavedObjectsClientContract): Pro
       // absent on rules saved before WS-1 (`rule` SO attribute is enabled:false/unmapped).
       description: rule?.description,
       severity: so.attributes.severity,
-      groupBy: rule?.groupBy,
+      // v1.2.3 D9: the builder stamps rule.groupBy as the suppression mirror, but an
+      // API-authored suppressed rule may carry only suppression.groupBy — fall back to it so
+      // the flyout labels bucket keys instead of degrading to positional "group key N".
+      groupBy: rule?.groupBy ?? rule?.suppression?.groupBy,
       threat: rule?.threat,
       note: rule?.note,
       investigationFields: rule?.investigationFields,

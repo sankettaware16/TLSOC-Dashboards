@@ -5,7 +5,7 @@
 
 import { RuleDefinition, ThresholdRuleDefinition } from './types';
 import { assertValidRule, assertValidThresholdRule } from './internal';
-import { compileToDocLevelMonitor } from './monitor';
+import { compileSuppressedStatelessToBucketMonitor, compileToDocLevelMonitor } from './monitor';
 import { compileToBucketLevelMonitor } from './bucket_monitor';
 import { compileAggregationRule, thresholdRuleToAggregationInput } from './agg_compile';
 import { compileToSigma } from './sigma';
@@ -14,6 +14,7 @@ import { assertValidPplRule, pplRuleToCompileInput, PplRuleDefinition } from './
 import {
   assertValidCustomQueryRule,
   compileCustomQueryToMonitor,
+  compileSuppressedCustomQueryToBucketMonitor,
   CustomQueryRuleDefinition,
 } from './custom_query';
 import {
@@ -95,8 +96,17 @@ const statelessType: RuleTypeDefinition = {
   id: 'stateless',
   monitorKind: 'doc',
   validate: (rule) => assertValidRule(rule as RuleDefinition),
-  compile: (rule) =>
-    (compileToDocLevelMonitor(rule as RuleDefinition) as unknown) as Record<string, unknown>,
+  compile: (rule) => {
+    // v1.2.3 D9 routing: a rule WITH `suppression` compiles to the grouped BUCKET monitor (the
+    // honest doc→bucket conversion — one alert per group per window); WITHOUT, the UNTOUCHED
+    // legacy doc-level path — golden.test.ts stays byte-identical. monitorKind stays 'doc':
+    // prepareMonitor keys alias routing off the COMPILED monitor_type (the D6 hybrid
+    // generalization), so suppressed rules skip the per-index aliasing with zero route edits.
+    const stateless = rule as RuleDefinition;
+    return ((stateless.suppression
+      ? compileSuppressedStatelessToBucketMonitor(stateless)
+      : compileToDocLevelMonitor(stateless)) as unknown) as Record<string, unknown>;
+  },
   toSigma: (rule) => compileToSigma(rule as RuleDefinition),
 };
 
@@ -108,11 +118,13 @@ const customQueryType: RuleTypeDefinition = {
   id: 'custom_query',
   monitorKind: 'doc',
   validate: (rule) => assertValidCustomQueryRule(rule as CustomQueryRuleDefinition),
-  compile: (rule) =>
-    (compileCustomQueryToMonitor(rule as CustomQueryRuleDefinition) as unknown) as Record<
-      string,
-      unknown
-    >,
+  compile: (rule) => {
+    // v1.2.3 D9: same suppression routing as statelessType (the monitor.ts twin's idiom).
+    const cq = rule as CustomQueryRuleDefinition;
+    return ((cq.suppression
+      ? compileSuppressedCustomQueryToBucketMonitor(cq)
+      : compileCustomQueryToMonitor(cq)) as unknown) as Record<string, unknown>;
+  },
 };
 
 /** v1.2.3 D3: the rule IS a PPL query (stored verbatim; re-parsed + lowered on every compile into

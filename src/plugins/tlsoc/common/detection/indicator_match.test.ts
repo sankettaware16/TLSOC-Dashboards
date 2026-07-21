@@ -300,3 +300,76 @@ describe('assertValidIndicatorMatchRule — reject-by-name battery', () => {
     expect(() => compileIndicatorLookupToBucketMonitor(bad)).toThrow(/unknown list mode/);
   });
 });
+
+/*
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ * v1.2.3 W4b (D9) — ADDITIVE tests: exceptions on both indicator-match compile shapes.
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ */
+describe('v1.2.3 D9 — indicator-match exceptions', () => {
+  const d9Rule = (overrides: Partial<IndicatorMatchRuleDefinition> = {}): IndicatorMatchRuleDefinition => ({
+    name: 'ioc rule',
+    severity: 'high',
+    index: 'fosstlsoc-logs-*',
+    eventField: 'source.ip',
+    listId: 'list-1',
+    listMode: 'lookup',
+    groupBy: ['source.ip'],
+    ...overrides,
+  });
+
+  it('inline query — byte identity without exceptions; fragment appended with them', () => {
+    const bare = buildInlineIndicatorQuery(d9Rule(), ['1.2.3.4']);
+    expect(bare).toBe('source.ip:("1.2.3.4")');
+    expect(buildInlineIndicatorQuery(d9Rule({ exceptions: [] }), ['1.2.3.4'])).toBe(bare);
+    expect(
+      buildInlineIndicatorQuery(
+        d9Rule({ exceptions: [{ field: 'source.ip', op: 'cidr', values: ['10.0.0.0/8'] }] }),
+        ['1.2.3.4']
+      )
+    ).toBe('(source.ip:("1.2.3.4")) AND NOT (source.ip:"10.0.0.0/8")');
+  });
+
+  it('inline query — pre-filter and exceptions compose (filter inside, NOT appended last)', () => {
+    expect(
+      buildInlineIndicatorQuery(
+        d9Rule({
+          filter: {
+            logic: 'AND',
+            conditions: [{ field: 'event.category', operator: 'equals', value: 'network' }],
+          },
+          exceptions: [{ field: 'user.name', op: 'equals', values: ['svc'] }],
+        }),
+        ['1.2.3.4']
+      )
+    ).toBe(
+      '(source.ip:("1.2.3.4") AND (event.category:"network")) AND NOT (user.name:"svc")'
+    );
+  });
+
+  it('lookup monitor — byte identity without exceptions; must_not clause appended with them', () => {
+    const withAbsent = compileIndicatorLookupToBucketMonitor(d9Rule());
+    const withEmpty = compileIndicatorLookupToBucketMonitor(d9Rule({ exceptions: [] }));
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(withAbsent));
+
+    const monitor = compileIndicatorLookupToBucketMonitor(
+      d9Rule({ exceptions: [{ field: 'user.name', op: 'is_one_of', values: ['a', 'b'] }] })
+    );
+    const filter = monitor.inputs[0].search.query.query.bool.filter as Array<
+      Record<string, unknown>
+    >;
+    // [range, terms-lookup, exceptions] — appended LAST.
+    expect(filter).toHaveLength(3);
+    expect(filter[2]).toEqual({
+      bool: { must_not: [{ terms: { 'user.name': ['a', 'b'] } }] },
+    });
+  });
+
+  it('invalid exceptions are rejected with the Indicator-match label', () => {
+    expect(() =>
+      assertValidIndicatorMatchRule(
+        d9Rule({ exceptions: [{ field: 's', op: 'cidr', values: ['999.0.0.0/8'] }] })
+      )
+    ).toThrow('Indicator-match rule "ioc rule": exception 1 ("s"): "999.0.0.0/8" is not a valid CIDR');
+  });
+});

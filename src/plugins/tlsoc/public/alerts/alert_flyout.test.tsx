@@ -199,3 +199,143 @@ describe('AlertFlyout — doc-level alert (no regression)', () => {
     expect(highlightTitles).not.toContain('Events in window');
   });
 });
+
+describe('AlertFlyout — Add exception action (v1.2.3 W4b, D9)', () => {
+  beforeEach(() => {
+    mockedUseRelatedDocs.mockReturnValue({ docs: [], loading: false, error: null });
+  });
+
+  const mountFlyout = (alertRaw: any, core: any) => {
+    const alert = normalizeAlert(alertRaw, rules);
+    let wrapper: any;
+    act(() => {
+      wrapper = mount(
+        <AlertFlyout
+          core={core}
+          alert={alert}
+          onClose={noop}
+          onAcknowledge={noop}
+          canInvestigate={false}
+          onInvestigate={noop}
+          onCreateCase={noop}
+        />
+      );
+    });
+    wrapper.update();
+    return wrapper;
+  };
+
+  it('renders the button for a bucket alert and pre-fills field=value from the group keys', () => {
+    const core = coreMock.createStart();
+    const wrapper = mountFlyout(rawBucketAlert, core);
+
+    const button = wrapper.find('EuiButton[data-test-subj="tlsocAddExceptionButton"]');
+    expect(button).toHaveLength(1);
+
+    act(() => {
+      button.prop('onClick')();
+    });
+    wrapper.update();
+
+    const select = wrapper.find('EuiSelect[data-test-subj="tlsocAddExceptionSelect"]');
+    expect(select).toHaveLength(1);
+    // Pre-filled from groupBy × bucketKeys: source.ip = 10.8.0.10.
+    expect(select.prop('options')).toEqual([{ value: 0, text: 'source.ip = 10.8.0.10' }]);
+  });
+
+  it('confirm GETs the rule, appends the exception, and PUTs it back (enabled omitted)', async () => {
+    const core = coreMock.createStart();
+    (core.http.get as jest.Mock).mockResolvedValue({
+      soId: 'so1',
+      mode: 'stateful',
+      rule: {
+        name: 'SSH brute force >3 in 5m per IP',
+        exceptions: [{ field: 'user.name', op: 'equals', values: ['svc-old'] }],
+      },
+    });
+    (core.http.put as jest.Mock).mockResolvedValue({ id: 'mon1', soId: 'so1' });
+
+    const wrapper = mountFlyout(rawBucketAlert, core);
+    act(() => {
+      wrapper.find('EuiButton[data-test-subj="tlsocAddExceptionButton"]').prop('onClick')();
+    });
+    wrapper.update();
+    await act(async () => {
+      await wrapper.find('EuiButton[data-test-subj="tlsocAddExceptionConfirm"]').prop('onClick')();
+    });
+    wrapper.update();
+
+    expect(core.http.get).toHaveBeenCalledWith('/api/tlsoc/detection/monitors/so1');
+    expect(core.http.put).toHaveBeenCalledTimes(1);
+    const [path, opts] = (core.http.put as jest.Mock).mock.calls[0];
+    expect(path).toBe('/api/tlsoc/detection/monitors/so1');
+    const body = JSON.parse(opts.body);
+    expect(body.mode).toBe('stateful');
+    expect(body.enabled).toBeUndefined(); // the route preserves the current enabled state
+    expect(body.rule.exceptions).toEqual([
+      { field: 'user.name', op: 'equals', values: ['svc-old'] }, // pre-existing entry kept
+      { field: 'source.ip', op: 'equals', values: ['10.8.0.10'] }, // the pre-filled addition
+    ]);
+
+    // The success confirmation renders.
+    expect(
+      wrapper.find('EuiCallOut[data-test-subj="tlsocAddExceptionDone"]')
+    ).toHaveLength(1);
+  });
+
+  it('surfaces the server error verbatim (e.g. the DETECTION_WRITERS 403) without closing', async () => {
+    const core = coreMock.createStart();
+    (core.http.get as jest.Mock).mockRejectedValue({
+      body: { message: 'You do not have permission to edit detections.' },
+    });
+
+    const wrapper = mountFlyout(rawBucketAlert, core);
+    act(() => {
+      wrapper.find('EuiButton[data-test-subj="tlsocAddExceptionButton"]').prop('onClick')();
+    });
+    wrapper.update();
+    await act(async () => {
+      await wrapper.find('EuiButton[data-test-subj="tlsocAddExceptionConfirm"]').prop('onClick')();
+    });
+    wrapper.update();
+
+    expect(core.http.put).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('You do not have permission to edit detections.');
+    // The panel stays open for retry/cancel.
+    expect(wrapper.find('[data-test-subj="tlsocAddExceptionPanel"]').length).toBeGreaterThan(0);
+  });
+
+  it('doc-level alert: candidates come from the highlighted related-doc fields', () => {
+    mockedUseRelatedDocs.mockReturnValue({
+      docs: [
+        {
+          id: 'd1',
+          index: 'logs-*',
+          found: true,
+          source: { user: { name: 'jdoe' }, source: { ip: '66.66.66.66' } },
+        },
+      ],
+      loading: false,
+      error: null,
+    });
+    const core = coreMock.createStart();
+    const wrapper = mountFlyout(rawDocAlert, core);
+    act(() => {
+      wrapper.find('EuiButton[data-test-subj="tlsocAddExceptionButton"]').prop('onClick')();
+    });
+    wrapper.update();
+    const options = wrapper
+      .find('EuiSelect[data-test-subj="tlsocAddExceptionSelect"]')
+      .prop('options') as Array<{ text: string }>;
+    expect(options.map((o) => o.text)).toEqual(
+      expect.arrayContaining(['user.name = jdoe', 'source.ip = 66.66.66.66'])
+    );
+  });
+
+  it('no button when the alert has no known rule (nothing to attach the exception to)', () => {
+    const orphanAlert = { ...rawBucketAlert, monitor_id: 'unknown-monitor' };
+    const core = coreMock.createStart();
+    const wrapper = mountFlyout(orphanAlert, core);
+    expect(wrapper.find('EuiButton[data-test-subj="tlsocAddExceptionButton"]')).toHaveLength(0);
+  });
+});

@@ -12,6 +12,7 @@ import {
 } from './internal';
 import { buildWindow } from './window';
 import { conditionGroupToLucene } from './lucene';
+import { exceptionsToFilterClause } from './exceptions';
 
 /**
  * Compile a stateful "> N within T" rule to an OpenSearch bucket-level Alerting monitor — the
@@ -63,6 +64,10 @@ export function compileToBucketLevelMonitor(rule: ThresholdRuleDefinition): Buck
   const window = buildWindow(rule.window, rule.runEvery);
   const filterQuery = conditionGroupToLucene(rule.filter);
   const painless = `params._count ${PAINLESS_OP[rule.threshold.operator]} ${rule.threshold.value}`;
+  // v1.2.3 D9: exceptions append ONE {bool: {must_not}} clause to the filter array (the shared
+  // bucket-side shape, exceptions.ts). A rule WITHOUT them compiles byte-identically —
+  // stateful_golden.test.ts stays green unmodified.
+  const exceptionClause = exceptionsToFilterClause(rule.exceptions);
 
   return {
     type: 'monitor',
@@ -96,6 +101,7 @@ export function compileToBucketLevelMonitor(rule: ThresholdRuleDefinition): Buck
                       analyze_wildcard: true,
                     },
                   },
+                  ...(exceptionClause ? [exceptionClause] : []),
                 ],
               },
             },

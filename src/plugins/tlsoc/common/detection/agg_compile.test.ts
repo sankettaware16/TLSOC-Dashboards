@@ -995,3 +995,71 @@ describe("stateful + advanced — the registry's D4 routing (and the D4 acceptan
     expect((getType('stateful').compile(scannerRule) as any).enabled).toBe(true);
   });
 });
+
+/*
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ * v1.2.3 W4b (D9) — ADDITIVE tests: exceptions on the D4 advanced-threshold routing helper.
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ */
+describe('v1.2.3 D9 — thresholdRuleToAggregationInput exceptions', () => {
+  const advancedRule = (overrides: Partial<ThresholdRuleDefinition> = {}): ThresholdRuleDefinition => ({
+    name: 'adv',
+    severity: 'high',
+    index: 'fosstlsoc-logs-*',
+    filter: {
+      logic: 'AND',
+      conditions: [{ field: 'event.category', operator: 'equals', value: 'web' }],
+    },
+    groupBy: ['source.ip'],
+    window: { value: 10, unit: 'MINUTES' },
+    threshold: { operator: 'gt', value: 0 },
+    advanced: {
+      by: ['source.ip'],
+      metrics: [{ alias: 'dc_paths', fn: 'cardinality', field: 'url.path' }],
+      having: { kind: 'cmp', alias: 'dc_paths', op: 'gte', value: 40 },
+    },
+    ...overrides,
+  });
+
+  it('byte identity: exceptions absent and [] produce the identical lucene-kind input', () => {
+    const withAbsent = thresholdRuleToAggregationInput(advancedRule());
+    const withEmpty = thresholdRuleToAggregationInput(advancedRule({ exceptions: [] }));
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(withAbsent));
+    expect(withAbsent.filter).toEqual({
+      kind: 'lucene',
+      query: 'event.category:"web"',
+    });
+  });
+
+  it('with exceptions: the filter becomes dsl [query_string, {bool: {must_not}}]', () => {
+    const input = thresholdRuleToAggregationInput(
+      advancedRule({ exceptions: [{ field: 'source.ip', op: 'cidr', values: ['10.0.0.0/8'] }] })
+    );
+    expect(input.filter).toEqual({
+      kind: 'dsl',
+      clauses: [
+        { query_string: { query: 'event.category:"web"', analyze_wildcard: true } },
+        { bool: { must_not: [{ term: { 'source.ip': '10.0.0.0/8' } }] } },
+      ],
+    });
+    // The compiled monitor carries both clauses verbatim in bool.filter (after the range).
+    const monitor = compileAggregationRule(input);
+    const filter = monitor.inputs[0].search.query.query.bool.filter;
+    expect(filter).toHaveLength(3);
+    expect(filter[2]).toEqual({
+      bool: { must_not: [{ term: { 'source.ip': '10.0.0.0/8' } }] },
+    });
+  });
+
+  it('the dsl query_string clause equals what the lucene kind would emit (shape parity)', () => {
+    const withExc = compileAggregationRule(
+      thresholdRuleToAggregationInput(
+        advancedRule({ exceptions: [{ field: 'u', op: 'equals', values: ['svc'] }] })
+      )
+    );
+    const withoutExc = compileAggregationRule(thresholdRuleToAggregationInput(advancedRule()));
+    expect(withExc.inputs[0].search.query.query.bool.filter[1]).toEqual(
+      withoutExc.inputs[0].search.query.query.bool.filter[1]
+    );
+  });
+});

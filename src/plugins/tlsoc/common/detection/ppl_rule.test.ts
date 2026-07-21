@@ -460,3 +460,72 @@ describe('likePatternToWildcard', () => {
     expect(likePatternToWildcard('a%b_c%d')).toBe('a*b?c*d');
   });
 });
+
+/*
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ * v1.2.3 W4b (D9) — ADDITIVE tests: exceptions on the PPL lowering.
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ */
+describe('v1.2.3 D9 — PPL exceptions (bucket must_not clause)', () => {
+  const d9Rule = (overrides: Partial<PplRuleDefinition> = {}): PplRuleDefinition => ({
+    name: 'ppl exc',
+    severity: 'medium',
+    index: 'fosstlsoc-logs-*',
+    pplText:
+      "source = fosstlsoc-logs-* | where event.outcome = 'failure' | stats count() as c by source.ip | where c > 10",
+    window: { value: 5, unit: 'MINUTES' },
+    groupBy: ['source.ip'],
+    ...overrides,
+  });
+
+  it('byte identity: exceptions absent and [] lower to the identical input', () => {
+    const withAbsent = pplRuleToCompileInput(d9Rule());
+    const withEmpty = pplRuleToCompileInput(d9Rule({ exceptions: [] }));
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(withAbsent));
+  });
+
+  it('with exceptions: the clause is appended LAST after the where clauses', () => {
+    const input = pplRuleToCompileInput(
+      d9Rule({ exceptions: [{ field: 'user.name', op: 'equals', values: ['svc'] }] })
+    );
+    expect(input.filter).toEqual({
+      kind: 'dsl',
+      clauses: [
+        { term: { 'event.outcome': 'failure' } },
+        { bool: { must_not: [{ term: { 'user.name': 'svc' } }] } },
+      ],
+    });
+  });
+
+  it('a where-less rule with exceptions still gets a dsl filter (exceptions only)', () => {
+    const input = pplRuleToCompileInput(
+      d9Rule({
+        pplText: 'source = fosstlsoc-logs-* | stats count() as c by source.ip | where c > 10',
+        exceptions: [{ field: 'source.ip', op: 'cidr', values: ['10.0.0.0/8'] }],
+      })
+    );
+    expect(input.filter).toEqual({
+      kind: 'dsl',
+      clauses: [{ bool: { must_not: [{ term: { 'source.ip': '10.0.0.0/8' } }] } }],
+    });
+  });
+
+  it('exception fields are NOT fieldMap-resolved (documented — the editor offers raw fields)', () => {
+    const input = pplRuleToCompileInput(
+      d9Rule({
+        fieldMap: { 'user.name': 'user.name.keyword' },
+        exceptions: [{ field: 'user.name', op: 'equals', values: ['svc'] }],
+      })
+    );
+    const clauses = (input.filter as { clauses: object[] }).clauses;
+    expect(clauses[clauses.length - 1]).toEqual({
+      bool: { must_not: [{ term: { 'user.name': 'svc' } }] },
+    });
+  });
+
+  it('invalid exceptions are rejected with the PPL label', () => {
+    expect(() =>
+      assertValidPplRule(d9Rule({ exceptions: [{ field: 'f', op: 'equals', values: [] }] }))
+    ).toThrow('PPL rule "ppl exc": exception 1 ("f") must list at least one value');
+  });
+});

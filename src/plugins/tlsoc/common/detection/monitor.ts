@@ -6,6 +6,9 @@
 import { RuleDefinition } from './types';
 import { SEVERITY_TO_MONITOR_SEVERITY, assertValidRule, slugify } from './internal';
 import { conditionGroupToLucene } from './lucene';
+import { applyExceptionsToLucene, exceptionsToFilterClause } from './exceptions';
+import { compileAggregationRule } from './agg_compile';
+import { BucketLevelMonitor } from './bucket_monitor';
 
 /**
  * Compile the detection IR to an OpenSearch doc-level Alerting monitor — the artifact that actually
@@ -43,11 +46,23 @@ export interface DocLevelMonitor {
   }>;
 }
 
-/** Compile a stateless rule to an OpenSearch doc-level Alerting monitor definition. */
+/** Compile a stateless rule to an OpenSearch doc-level Alerting monitor definition.
+ * v1.2.3 D9: a rule WITH `suppression` never compiles doc-level — it is REFUSED by name here
+ * (the thresholdRuleToAggregationInput idiom) and compiles through
+ * {@link compileSuppressedStatelessToBucketMonitor} instead; silently ignoring the field would
+ * be the banned silent-failure class. Exceptions append the ` AND NOT (…)` fragment to the
+ * query; a rule without them compiles byte-identically (golden-pinned). */
 export function compileToDocLevelMonitor(rule: RuleDefinition): DocLevelMonitor {
   assertValidRule(rule);
+  if (rule.suppression) {
+    throw new Error(
+      `Detection rule "${rule.name}" carries suppression — it compiles to a grouped ` +
+        '(bucket-level) monitor via compileSuppressedStatelessToBucketMonitor, never to a ' +
+        'doc-level monitor (doc-level monitors have no per-field suppression primitive).'
+    );
+  }
   const slug = slugify(rule.name);
-  const query = conditionGroupToLucene(rule.group);
+  const query = applyExceptionsToLucene(conditionGroupToLucene(rule.group), rule.exceptions);
 
   return {
     type: 'monitor',
@@ -87,4 +102,55 @@ export function compileToDocLevelMonitor(rule: RuleDefinition): DocLevelMonitor 
       },
     ],
   };
+}
+
+/**
+ * v1.2.3 D9: compile a SUPPRESSED stateless rule to the bucket-level monitor that executes it —
+ * the honest doc→bucket conversion (research_r2 §e): the rule's match becomes the aggregation
+ * filter, `suppression.groupBy` the composite group-by, `suppression.window` the window, trigger
+ * `_count >= 1` — ONE alert per group per window, deduplicated by the engine's per-bucket-key
+ * alert lifecycle. TRADE-OFF (stated verbatim in the builder): the alert loses per-doc
+ * findings/related docs — it carries the group keys instead.
+ *
+ * Emission goes through {@link compileAggregationRule} (the ONE bucket compiler — the new_terms
+ * discipline): the match rides as a `dsl` query_string clause, exceptions as the shared
+ * `{bool: {must_not}}` clause, so composite shape / GROUPS_AGG naming / window idiom are all
+ * inherited. The ONLY post-compile override is the trigger's display NAME ("threshold breached"
+ * would mislead on a single-event rule); the condition stays compiler-emitted, untouched.
+ */
+export function compileSuppressedStatelessToBucketMonitor(
+  rule: RuleDefinition
+): BucketLevelMonitor {
+  assertValidRule(rule);
+  if (!rule.suppression) {
+    throw new Error(
+      `Detection rule "${rule.name}" has no suppression — compile it through ` +
+        'compileToDocLevelMonitor (the doc-level path).'
+    );
+  }
+  const clauses: Array<Record<string, unknown>> = [
+    { query_string: { query: conditionGroupToLucene(rule.group), analyze_wildcard: true } },
+  ];
+  const exceptionClause = exceptionsToFilterClause(rule.exceptions);
+  if (exceptionClause) {
+    clauses.push(exceptionClause);
+  }
+  const monitor = compileAggregationRule({
+    name: rule.name,
+    severity: rule.severity,
+    index: rule.index,
+    filter: { kind: 'dsl', clauses },
+    spec: {
+      by: rule.suppression.groupBy,
+      metrics: [],
+      // Any group with at least one matching event in the window = one alert.
+      having: { kind: 'cmp', alias: '_count', op: 'gte', value: 1 },
+    },
+    window: rule.suppression.window,
+    ...(rule.runEvery ? { runEvery: rule.runEvery } : {}),
+  });
+  // Cosmetic override ONLY (the new_terms precedent): keep the doc-level trigger copy so the
+  // alert reads as a match, not a threshold breach. The condition is untouched.
+  monitor.triggers[0].bucket_level_trigger.name = `${rule.name} matched`;
+  return monitor;
 }

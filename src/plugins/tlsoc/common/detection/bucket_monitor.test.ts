@@ -196,3 +196,50 @@ describe('assertValidThresholdRule — guards (via compile)', () => {
     ).toThrow(/non-negative integer threshold/);
   });
 });
+
+/*
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ * v1.2.3 W4b (D9) — ADDITIVE tests: exceptions on the legacy stateful compiler.
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ */
+describe('v1.2.3 D9 — threshold exceptions (bucket must_not clause)', () => {
+  it('byte identity: exceptions absent and exceptions [] compile identically', () => {
+    const withAbsent = compileToBucketLevelMonitor(baseRule());
+    const withEmpty = compileToBucketLevelMonitor(baseRule({ exceptions: [] }));
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(withAbsent));
+    // The filter list stays exactly [range, query_string].
+    expect(withAbsent.inputs[0].search.query.query.bool.filter).toHaveLength(2);
+  });
+
+  it('with exceptions: ONE {bool: {must_not}} clause is appended LAST to the filter list', () => {
+    const monitor = compileToBucketLevelMonitor(
+      baseRule({
+        exceptions: [
+          { field: 'user.name', op: 'is_one_of', values: ['svc-a', 'svc-b'] },
+          { field: 'source.ip', op: 'cidr', values: ['10.0.0.0/8'] },
+        ],
+      })
+    );
+    const filter = monitor.inputs[0].search.query.query.bool.filter;
+    expect(filter).toHaveLength(3);
+    expect(filter[2]).toEqual({
+      bool: {
+        must_not: [
+          { terms: { 'user.name': ['svc-a', 'svc-b'] } },
+          { term: { 'source.ip': '10.0.0.0/8' } },
+        ],
+      },
+    });
+    // The first two clauses are untouched.
+    expect(Object.keys(filter[0])).toEqual(['range']);
+    expect(Object.keys(filter[1])).toEqual(['query_string']);
+  });
+
+  it('invalid exceptions are rejected at validate time with the Threshold-rule label', () => {
+    expect(() =>
+      compileToBucketLevelMonitor(
+        baseRule({ exceptions: [{ field: '', op: 'equals', values: ['v'] }] })
+      )
+    ).toThrow('Threshold rule "r": exception 1: a field is required.');
+  });
+});

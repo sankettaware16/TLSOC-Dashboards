@@ -11,6 +11,7 @@ import {
   MetricFn,
 } from './agg_types';
 import { assertValidTimeWindowUnit, windowMinutes } from './internal';
+import { exceptionsToFilterClause, validateExceptions } from './exceptions';
 import { RuleMetadataFields, Severity, TimeWindow } from './types';
 import { MetricAgg, parsePpl, PplHavingExpr, PplRuleAst, WhereExpr } from './ppl_parse';
 
@@ -167,6 +168,10 @@ export function assertValidPplRule(rule: PplRuleDefinition): void {
       );
     }
   }
+  // v1.2.3 D9: exceptions are additive — a rule WITHOUT them validates exactly as before.
+  if (rule.exceptions !== undefined) {
+    validateExceptions(rule.exceptions, `PPL rule "${rule.name}"`);
+  }
 }
 
 /**
@@ -272,14 +277,24 @@ export function lowerPplToCompileInput(
     : // No post-stats where: fire for every group with >= 1 matching event (parse warns).
       { kind: 'cmp', alias: '_count', op: 'gt', value: 0 };
 
-  let filter: AggFilter | null = null;
+  const filterClauses: object[] = [];
   if (ast.where !== null) {
-    const clauses =
-      ast.where.kind === 'and'
+    filterClauses.push(
+      ...(ast.where.kind === 'and'
         ? ast.where.operands.map((e) => compileWhereExpr(e, resolveField))
-        : [compileWhereExpr(ast.where, resolveField)];
-    filter = { kind: 'dsl', clauses };
+        : [compileWhereExpr(ast.where, resolveField)])
+    );
   }
+  // v1.2.3 D9: exceptions append the shared {bool: {must_not}} clause LAST (after the where
+  // clauses); the fields inside exception entries are NOT fieldMap-resolved — the exceptions
+  // editor offers the data view's fields directly, and a rule WITHOUT exceptions lowers
+  // byte-identically (golden-pinned).
+  const exceptionClause = exceptionsToFilterClause(rule.exceptions);
+  if (exceptionClause) {
+    filterClauses.push(exceptionClause);
+  }
+  const filter: AggFilter | null =
+    filterClauses.length > 0 ? { kind: 'dsl', clauses: filterClauses } : null;
 
   const out: AggregationCompileInput = {
     name: rule.name,

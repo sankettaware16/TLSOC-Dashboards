@@ -4,7 +4,11 @@
  */
 
 import { compileToBucketLevelMonitor } from './bucket_monitor';
-import { compileToDocLevelMonitor } from './monitor';
+import { compileSuppressedStatelessToBucketMonitor, compileToDocLevelMonitor } from './monitor';
+import {
+  compileSuppressedCustomQueryToBucketMonitor,
+  CustomQueryRuleDefinition,
+} from './custom_query';
 import { getType, isValidMode, listTypes, unknownTypeMessage } from './registry';
 import { compileToSigma } from './sigma';
 import { compileToSigmaCorrelation } from './sigma_correlation';
@@ -62,6 +66,37 @@ describe('rule-type registry — the two existing types wrap their compilers ver
   it("compile dispatches to the existing compilers verbatim (the goldens' guarantee holds)", () => {
     expect(getType('stateless').compile(stateless)).toEqual(compileToDocLevelMonitor(stateless));
     expect(getType('stateful').compile(stateful)).toEqual(compileToBucketLevelMonitor(stateful));
+  });
+
+  it('a SUPPRESSED doc-kind rule dispatches to the bucket converters (v1.2.3 D9 wiring)', () => {
+    const suppression = { groupBy: ['source.ip'], window: { value: 5, unit: 'MINUTES' as const } };
+    const suppressedStateless: RuleDefinition = {
+      ...stateless,
+      suppression,
+      groupBy: ['source.ip'],
+    };
+    expect(getType('stateless').compile(suppressedStateless)).toEqual(
+      compileSuppressedStatelessToBucketMonitor(suppressedStateless)
+    );
+    expect(
+      (getType('stateless').compile(suppressedStateless) as { monitor_type: string }).monitor_type
+    ).toBe('bucket_level_monitor');
+
+    const suppressedCq: CustomQueryRuleDefinition = {
+      name: 'Admin probe',
+      severity: 'high',
+      index: 'fosstlsoc-logs-moodle-2026.05.16',
+      language: 'lucene',
+      queryText: 'url.path:*admin*',
+      suppression,
+      groupBy: ['source.ip'],
+    };
+    expect(getType('custom_query').compile(suppressedCq)).toEqual(
+      compileSuppressedCustomQueryToBucketMonitor(suppressedCq)
+    );
+    expect(
+      (getType('custom_query').compile(suppressedCq) as { monitor_type: string }).monitor_type
+    ).toBe('bucket_level_monitor');
   });
 
   it('toSigma dispatches to the existing Sigma exporters verbatim', () => {

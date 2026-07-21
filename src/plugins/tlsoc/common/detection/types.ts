@@ -21,6 +21,9 @@
 // Type-only import (agg_types has no runtime exports, and its own import of this file is
 // type-only too) — the types ⇄ agg_types cycle is fully erased at runtime.
 import type { AggregationSpec } from './agg_types';
+// Type-only import: exceptions.ts imports Condition from here type-only as well, so the
+// types ⇄ exceptions cycle is fully erased at runtime (the agg_types idiom).
+import type { ExceptionEntry } from './exceptions';
 
 /** The v1 operator set. Every operator here compiles to BOTH Sigma and a doc-level monitor query. */
 export type DetectionOperator =
@@ -142,6 +145,38 @@ export interface RuleMetadataFields {
   riskScore?: number;
   /** Known false-positive scenarios for this rule, surfaced to the triaging analyst. */
   falsePositives?: string[];
+  /** Analyst labels for list filtering/bulk ops (v1.2.3 D8; ≤20 tags × ≤50 chars, enforced by the routes). */
+  tags?: string[];
+  /**
+   * Exception list (v1.2.3 D9): events matching ANY entry never alert. Lives on this shared base
+   * so EVERY rule type carries it (all six IRs extend RuleMetadataFields); every compiler applies
+   * it via the pure emitters in exceptions.ts — doc-level compilers append the ` AND NOT (…)`
+   * Lucene fragment, bucket compilers append one `{bool: {must_not: […]}}` filter clause.
+   * ABSENT (or empty) = the rule compiles byte-identically to pre-D9 output (golden-pinned).
+   * Deliberately NOT folded into ConditionGroup: the flat single-logic IR cannot express
+   * `<group> AND NOT <or-of-exceptions>` when the group is OR (research_r6 §B3).
+   */
+  exceptions?: ExceptionEntry[];
+}
+
+/**
+ * Alert suppression for DOC-kind rule types (v1.2.3 D9 — stateless + custom_query only).
+ * When present, the rule COMPILES TO A BUCKET-LEVEL MONITOR instead of a doc-level one:
+ * grouped by `groupBy` over `window`, trigger `_count >= 1` — one alert per group per window,
+ * deduplicated by the engine's per-bucket-key alert lifecycle (the ONLY honest suppression the
+ * engine can deliver; doc-level monitors have no per-field suppression primitive, and trigger
+ * throttle affects only notification actions TLSOC never emits — research_r2 §e).
+ * TRADE-OFF (stated verbatim in the builder UI): the alert loses per-doc findings/related docs —
+ * it carries the group keys instead. Bucket-kind types never carry this field: group-by dedup is
+ * inherent there (no knobs to add).
+ */
+export interface SuppressionConfig {
+  /** The suppress-by fields — the compiled monitor's composite group-by sources. At least one;
+   * must be aggregatable (the builder offers aggregatable fields only). */
+  groupBy: string[];
+  /** The suppression window — one alert per group per window (schedule and range both derive
+   * from it via buildWindow unless runEvery overrides the cadence). */
+  window: TimeWindow;
 }
 
 /** A complete no-code detection rule — the builder's output and the compilers' input. */
@@ -165,6 +200,19 @@ export interface RuleDefinition extends RuleMetadataFields {
    * for a stateless (doc-level) rule there is no window/range to derive from R in the first place.
    */
   runEvery?: TimeWindow;
+  /**
+   * OPTIONAL alert suppression (v1.2.3 D9). ABSENT = the legacy doc-level compile path —
+   * byte-identical output (the goldens' guarantee). PRESENT = the rule compiles through
+   * {@link compileSuppressedStatelessToBucketMonitor} to a bucket-level monitor instead
+   * (see {@link SuppressionConfig} for semantics and the enrichment trade-off).
+   */
+  suppression?: SuppressionConfig;
+  /**
+   * Suppressed rules only: MUST mirror `suppression.groupBy` (validated when both are present).
+   * The alerts join reads `rule.groupBy` to label bucket keys in the flyout (the R1 risk) — the
+   * builder stamps it automatically alongside `suppression`.
+   */
+  groupBy?: string[];
 }
 
 /**

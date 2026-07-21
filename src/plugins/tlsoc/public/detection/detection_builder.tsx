@@ -48,6 +48,7 @@ import {
   RuleDefinition,
   RuleMetadataFields,
   Severity,
+  SuppressionConfig,
   ThreatEntry,
   ThresholdRuleDefinition,
   TimeWindow,
@@ -60,6 +61,14 @@ import type {
   CustomQueryLanguage,
   CustomQueryRuleDefinition,
 } from '../../common/detection/custom_query';
+import {
+  ExceptionEntry,
+  exceptionFieldNames,
+  ruleHasExceptions,
+} from '../../common/detection/exceptions';
+import { compileSuppressedStatelessToBucketMonitor } from '../../common/detection/monitor';
+import { compileSuppressedCustomQueryToBucketMonitor } from '../../common/detection/custom_query';
+import { ExceptionsSection, SuppressionSection } from './exceptions_section';
 import { CustomQueryPreview } from './custom_query_preview';
 import type { PplPreviewData } from './ppl_preview_table';
 import { MitreTtpPicker } from './mitre_ttp_picker';
@@ -133,6 +142,9 @@ function seedFrom(
     investigationFields: (r?.investigationFields as string[]) ?? [],
     falsePositives: (r?.falsePositives as string[]) ?? [],
     references: (r?.references as string[]) ?? [],
+    // v1.2.3 D8: analyst labels for list filtering/bulk ops (the create/update routes
+    // normalize/reject-by-name: trim, dedupe, ≤20 tags × ≤50 chars).
+    tags: (r?.tags as string[]) ?? [],
     // WS-20 (PROB-20): the schedule cadence R — round-trips losslessly, undefined = legacy default.
     runEvery: r?.runEvery as TimeWindow | undefined,
     // v1.2.3 W2a (D4): the stateful rule's optional advanced aggregation spec.
@@ -156,6 +168,10 @@ function seedFrom(
     listId: (r?.listId as string) ?? '',
     eventField: (r?.eventField as string) ?? '',
     listMode: (r?.listMode as 'inline' | 'lookup') ?? 'inline',
+    // v1.2.3 W4b (D9): exceptions (every type) + suppression (doc-kind types only) — both
+    // round-trip losslessly; absent = legacy behavior.
+    exceptions: (r?.exceptions as ExceptionEntry[] | undefined) ?? [],
+    suppression: (r?.suppression as SuppressionConfig | undefined) ?? undefined,
   };
 }
 
@@ -237,9 +253,26 @@ export function DetectionBuilder({
   const [investigationFields, setInvestigationFields] = useState<string[]>(seed.investigationFields);
   const [falsePositives, setFalsePositives] = useState<string[]>(seed.falsePositives);
   const [references, setReferences] = useState<string[]>(seed.references);
+  // v1.2.3 D8: freeform rule tags — part of the shared metadata, so every type carries them.
+  const [tags, setTags] = useState<string[]>(seed.tags);
 
   // Schedule cadence R (optional) — WS-20, PROB-20.
   const [runEvery, setRunEvery] = useState<TimeWindow | undefined>(seed.runEvery);
+
+  // v1.2.3 W4b (D9): exceptions (every type) + suppression (doc-kind types only). Suppression
+  // keeps its config while toggled OFF so switching it back on restores the analyst's fields.
+  const [exceptions, setExceptions] = useState<ExceptionEntry[]>(seed.exceptions);
+  const [suppressionOn, setSuppressionOn] = useState<boolean>(!!seed.suppression);
+  const [suppressionConfig, setSuppressionConfig] = useState<SuppressionConfig>(
+    seed.suppression ?? { groupBy: [], window: { value: 5, unit: 'MINUTES' } }
+  );
+  /** The ACTIVE suppression: only doc-kind types, only when toggled on with fields chosen. */
+  const suppression: SuppressionConfig | undefined =
+    (mode === 'stateless' || mode === 'custom_query') &&
+    suppressionOn &&
+    suppressionConfig.groupBy.length > 0
+      ? suppressionConfig
+      : undefined;
 
   // Enable/disable on save (WS-19, PROB-19) — defaults to true for a brand-new detection; edit
   // hydration passes the saved object's current value in via `initialEnabled`.
@@ -372,7 +405,16 @@ export function DetectionBuilder({
       ...(riskScore !== undefined ? { riskScore } : {}),
       ...(falsePositives.length ? { falsePositives } : {}),
       ...(references.length ? { references } : {}),
+      // v1.2.3 D8: tags ride the shared metadata spread — every type's branch carries them.
+      ...(tags.length ? { tags } : {}),
+      // v1.2.3 D9: exceptions live on the shared metadata base — EVERY type's branch carries them.
+      ...(exceptions.length ? { exceptions } : {}),
     };
+    // v1.2.3 D9: the doc-kind suppression slice. groupBy is stamped as the suppression mirror —
+    // the alerts join labels bucket keys from rule.groupBy (validated equal by the compiler).
+    const suppressionSlice = suppression
+      ? { suppression, groupBy: suppression.groupBy }
+      : {};
     if (mode === 'stateless') {
       return {
         name: ruleName,
@@ -380,6 +422,7 @@ export function DetectionBuilder({
         index,
         group: { logic, conditions: cleaned },
         ...(runEvery ? { runEvery } : {}),
+        ...suppressionSlice,
         ...metadata,
       };
     }
@@ -391,6 +434,7 @@ export function DetectionBuilder({
         language: queryLanguage,
         queryText,
         ...(runEvery ? { runEvery } : {}),
+        ...suppressionSlice,
         ...metadata,
       };
     }
@@ -482,6 +526,7 @@ export function DetectionBuilder({
     riskScore,
     falsePositives,
     references,
+    tags,
     runEvery,
     advanced,
     pplText,
@@ -494,6 +539,8 @@ export function DetectionBuilder({
     historyWindow,
     listId,
     eventField,
+    exceptions,
+    suppression,
   ]);
 
   /**
@@ -528,10 +575,25 @@ export function DetectionBuilder({
       if (ruleType.id === 'indicator_match') {
         ruleType.compile(currentRule);
       }
+      // v1.2.3 D9: a SUPPRESSED doc-kind rule compiles to a bucket monitor via the dedicated
+      // converters (compileToDocLevelMonitor refuses suppressed rules by name), and its Sigma
+      // export is withheld — Sigma cannot express the grouped compile target, and exporting the
+      // ungrouped rule as if it were this rule would mislead (the D4 advanced-metrics precedent).
+      const docSuppressed =
+        (ruleType.id === 'stateless' || ruleType.id === 'custom_query') &&
+        !!(currentRule as RuleDefinition).suppression;
       return {
         ok: true,
-        sigma: ruleType.toSigma ? ruleType.toSigma(currentRule) : '',
-        monitor: ruleType.monitorKind === 'doc' ? ruleType.compile(currentRule) : null,
+        sigma: ruleType.toSigma && !docSuppressed ? ruleType.toSigma(currentRule) : '',
+        monitor: docSuppressed
+          ? ((((ruleType.id === 'stateless'
+              ? compileSuppressedStatelessToBucketMonitor(currentRule as RuleDefinition)
+              : compileSuppressedCustomQueryToBucketMonitor(
+                  currentRule as CustomQueryRuleDefinition
+                )) as unknown) as Record<string, unknown>))
+          : ruleType.monitorKind === 'doc'
+          ? ruleType.compile(currentRule)
+          : null,
       };
     } catch (e) {
       return { ok: false, error: (e as Error)?.message ?? 'The rule is incomplete.' };
@@ -760,8 +822,12 @@ export function DetectionBuilder({
   const isInlineIndicatorDraft =
     mode === 'indicator_match' &&
     (currentRule as IndicatorMatchRuleDefinition).listMode === 'inline';
+  // v1.2.3 D9: a SUPPRESSED doc-kind rule compiles to a BUCKET monitor (patterns accepted
+  // natively — no alias routing), so the alias callout is withheld while suppression is on.
   const statelessAlias =
-    (ruleType.monitorKind === 'doc' || isInlineIndicatorDraft) && /[.*]/.test(currentRule.index)
+    (ruleType.monitorKind === 'doc' || isInlineIndicatorDraft) &&
+    !suppression &&
+    /[.*]/.test(currentRule.index)
       ? deriveAliasName(currentRule.index)
       : null;
 
@@ -957,10 +1023,43 @@ export function DetectionBuilder({
               ruleType.id !== 'new_terms' &&
               ruleType.id !== 'indicator_match'
                 ? { value: windowValue, unit: windowUnit }
-                : undefined
+                : // v1.2.3 D9: a SUPPRESSED doc-kind rule compiles to a bucket monitor whose
+                  // window is the suppression window — the same R ≤ T cap applies.
+                  suppression?.window
             }
             onChange={setRunEvery}
           />
+          <EuiSpacer size="m" />
+
+          {/* v1.2.3 W4b (D9): the noise-control panel — exceptions for EVERY type, suppression
+              knobs for doc-kind types (stateless/custom_query), inherent-suppression copy for
+              bucket-kind types. All state lives in the builder (the editor-slot discipline). */}
+          <EuiPanel hasShadow={false} hasBorder>
+            <EuiTitle size="xs">
+              <h2>Noise control</h2>
+            </EuiTitle>
+            <EuiSpacer size="s" />
+            <ExceptionsSection
+              entries={exceptions}
+              onChange={setExceptions}
+              fields={fields}
+              hasDataView={!!selectedView}
+            />
+            <EuiSpacer size="m" />
+            <EuiHorizontalRule margin="s" />
+            <SuppressionSection
+              kind={
+                ruleType.id === 'stateless' || ruleType.id === 'custom_query' ? 'doc' : 'bucket'
+              }
+              enabled={suppressionOn}
+              groupBy={suppressionConfig.groupBy}
+              window={suppressionConfig.window}
+              onToggle={setSuppressionOn}
+              onChange={setSuppressionConfig}
+              fields={fields}
+              hasDataView={!!selectedView}
+            />
+          </EuiPanel>
           <EuiSpacer size="m" />
 
           <EuiPanel hasShadow={false} hasBorder>
@@ -988,6 +1087,25 @@ export function DetectionBuilder({
                 </EuiFormRow>
               </EuiFlexItem>
             </EuiFlexGroup>
+            <EuiSpacer size="s" />
+            {/* v1.2.3 D8: freeform tags for list filtering/bulk ops. The save routes are the
+                authority on the contract (trim/dedupe, max 20 tags × 50 chars — 400 by name). */}
+            <EuiFormRow
+              label="Tags (optional)"
+              helpText="Labels for filtering the rules list (max 20 per rule, 50 characters each)."
+              fullWidth
+            >
+              <EuiComboBox
+                noSuggestions
+                placeholder="Type a tag and press Enter"
+                selectedOptions={tags.map((t) => ({ label: t }))}
+                onCreateOption={(val: string) => {
+                  const v = val.trim();
+                  if (v && !tags.includes(v)) setTags([...tags, v]);
+                }}
+                onChange={(opts: Array<{ label: string }>) => setTags(opts.map((o) => o.label))}
+              />
+            </EuiFormRow>
             <EuiSpacer size="m" />
 
             <EuiAccordion id="tlsoc-triage-context" buttonContent="Triage & context (optional)">
@@ -1099,6 +1217,19 @@ export function DetectionBuilder({
               </EuiText>
               <EuiSpacer size="m" />
             </>
+          ) : mode === 'stateless' && suppression ? (
+            <>
+              {/* v1.2.3 D9: the suppressed compile target (a grouped bucket monitor) cannot be
+                  expressed in a Sigma detection rule — exporting the UNGROUPED rule as if it
+                  were this rule would mislead (the advanced-metrics precedent). */}
+              <EuiText size="s" color="subdued">
+                <p>
+                  Suppressed rules cannot be expressed in Sigma — the Sigma export is unavailable
+                  while alert suppression is on.
+                </p>
+              </EuiText>
+              <EuiSpacer size="m" />
+            </>
           ) : ruleType.toSigma ? (
             <>
               <EuiPanel hasShadow={false} hasBorder>
@@ -1117,6 +1248,27 @@ export function DetectionBuilder({
                   </p>
                 </EuiText>
                 <EuiSpacer size="s" />
+                {ruleHasExceptions(currentRule) ? (
+                  <>
+                    {/* v1.2.3 D9: the NAMED omission warning — exceptions are TLSOC-native and
+                        never leak into portable Sigma logic (they ride the native JSON export). */}
+                    <EuiCallOut
+                      size="s"
+                      color="warning"
+                      iconType="alert"
+                      data-test-subj="tlsocSigmaExceptionsWarning"
+                      title="Exceptions are omitted from the Sigma export"
+                    >
+                      <p>
+                        This rule&apos;s exceptions on{' '}
+                        <strong>{exceptionFieldNames(currentRule).join(', ')}</strong> are
+                        TLSOC-native and are NOT included in the Sigma YAML — importing it
+                        elsewhere runs the rule without them.
+                      </p>
+                    </EuiCallOut>
+                    <EuiSpacer size="s" />
+                  </>
+                ) : null}
                 <EuiAccordion
                   id="tlsoc-sigma-export"
                   buttonContent="View Sigma export (portable YAML)"
@@ -1259,7 +1411,11 @@ export function DetectionBuilder({
             </EuiCallOut>
             <EuiSpacer size="m" />
             <EuiTitle size="xxs">
-              <h3>Compiled doc-level monitor</h3>
+              <h3>
+                {suppression
+                  ? 'Compiled bucket-level monitor (alert suppression on)'
+                  : 'Compiled doc-level monitor'}
+              </h3>
             </EuiTitle>
             <EuiSpacer size="s" />
             {preview.ok && preview.monitor ? (

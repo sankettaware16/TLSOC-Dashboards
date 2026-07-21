@@ -17,6 +17,7 @@ import {
 } from './internal';
 import { buildWindow } from './window';
 import { conditionGroupToLucene } from './lucene';
+import { exceptionsToFilterClause } from './exceptions';
 
 /**
  * THE v1.2.3 aggregation compiler — the ONE compiler both new bucket-shaped front-ends lower to:
@@ -303,11 +304,30 @@ export function thresholdRuleToAggregationInput(
         'compileToBucketLevelMonitor (the legacy count-only path).'
     );
   }
+  // v1.2.3 D9: exceptions ride as the shared {bool: {must_not}} clause — which needs the `dsl`
+  // filter kind (the lucene kind carries exactly one query_string). WITHOUT exceptions the
+  // legacy lucene-kind input is kept byte-identically (the D4 goldens' guarantee); the emitted
+  // query_string clause is the same either way (compileAggregationRule emits an identical
+  // clause for both kinds).
+  const exceptionClause = exceptionsToFilterClause(rule.exceptions);
   return {
     name: rule.name,
     severity: rule.severity,
     index: rule.index,
-    filter: { kind: 'lucene', query: conditionGroupToLucene(rule.filter) },
+    filter: exceptionClause
+      ? {
+          kind: 'dsl',
+          clauses: [
+            {
+              query_string: {
+                query: conditionGroupToLucene(rule.filter),
+                analyze_wildcard: true,
+              },
+            },
+            exceptionClause,
+          ],
+        }
+      : { kind: 'lucene', query: conditionGroupToLucene(rule.filter) },
     spec: { by: rule.groupBy, metrics: rule.advanced.metrics, having: rule.advanced.having },
     window: rule.window,
     ...(rule.runEvery ? { runEvery: rule.runEvery } : {}),

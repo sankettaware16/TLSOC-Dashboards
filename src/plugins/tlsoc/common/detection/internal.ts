@@ -9,10 +9,12 @@ import {
   LIST_OPERATORS,
   RuleDefinition,
   Severity,
+  SuppressionConfig,
   ThresholdRuleDefinition,
   TimeWindow,
   VALUELESS_OPERATORS,
 } from './types';
+import { validateExceptions } from './exceptions';
 // Type-only import (agg_types has no runtime exports), so no runtime cycle exists even though
 // agg_types.ts itself imports types from './types'.
 import type { AggregationSpec, HavingExpr } from './agg_types';
@@ -100,6 +102,52 @@ export function assertValidRule(rule: RuleDefinition): void {
     }
     assertValidTimeWindowUnit(rule.runEvery, 'run-every', `Detection rule "${rule.name}"`);
   }
+  // v1.2.3 D9 (both additive — a rule WITHOUT them validates exactly as before):
+  if (rule.exceptions !== undefined) {
+    validateExceptions(rule.exceptions, `Detection rule "${rule.name}"`);
+  }
+  if (rule.suppression !== undefined) {
+    assertValidSuppression(rule.suppression, `Detection rule "${rule.name}"`);
+    // The alerts join labels bucket keys from rule.groupBy — a stale mirror would mislabel the
+    // suppressed alert's group keys (the same R1 risk new_terms/indicator_match enforce).
+    if (
+      rule.groupBy !== undefined &&
+      (rule.groupBy.length !== rule.suppression.groupBy.length ||
+        rule.groupBy.some((f, i) => f !== rule.suppression!.groupBy[i]))
+    ) {
+      throw new Error(
+        `Detection rule "${rule.name}": groupBy must mirror suppression.groupBy ` +
+          `(${rule.suppression.groupBy.join(', ')}) — the alert flyout labels group keys from it.`
+      );
+    }
+  }
+}
+
+/**
+ * Validate a doc-kind rule's suppression config (v1.2.3 D9); throws with a user-facing message.
+ * Field aggregatability cannot be checked here (pure module, no cluster) — the builder offers
+ * aggregatable fields only, and the compiled monitor's composite validation is the engine gate.
+ */
+export function assertValidSuppression(suppression: SuppressionConfig, ruleLabel: string): void {
+  if (!suppression || typeof suppression !== 'object' || Array.isArray(suppression)) {
+    throw new Error(`${ruleLabel}: suppression is malformed.`);
+  }
+  if (!Array.isArray(suppression.groupBy) || suppression.groupBy.length === 0) {
+    throw new Error(`${ruleLabel}: suppression must group by at least one field.`);
+  }
+  suppression.groupBy.forEach((field) => {
+    if (typeof field !== 'string' || field.trim() === '') {
+      throw new Error(`${ruleLabel}: suppression group-by entries must be non-empty field names.`);
+    }
+  });
+  if (
+    !suppression.window ||
+    !(suppression.window.value > 0) ||
+    !Number.isInteger(suppression.window.value)
+  ) {
+    throw new Error(`${ruleLabel} must have a positive integer suppression window.`);
+  }
+  assertValidTimeWindowUnit(suppression.window, 'suppression window', ruleLabel);
 }
 
 function assertValidCondition(condition: Condition, index: number, ruleName: string): void {
@@ -177,6 +225,10 @@ export function assertValidThresholdRule(rule: ThresholdRuleDefinition): void {
           'cadence would leave time the rule never evaluates.'
       );
     }
+  }
+  // v1.2.3 D9: exceptions are additive — a rule WITHOUT them validates exactly as before.
+  if (rule.exceptions !== undefined) {
+    validateExceptions(rule.exceptions, `Threshold rule "${rule.name}"`);
   }
   // v1.2.3 D4: OPTIONAL enhanced metrics. When present, the advanced spec is validated with
   // rule.groupBy as its group-by — rule.groupBy is authoritative (advanced.by is ignored at

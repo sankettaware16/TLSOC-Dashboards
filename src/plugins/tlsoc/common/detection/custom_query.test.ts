@@ -296,3 +296,173 @@ describe('compileCustomQueryText', () => {
     ).toBe('(a:1) AND (b:*x*)');
   });
 });
+
+/*
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ * v1.2.3 W4b (D9) — ADDITIVE tests: exceptions + the suppression conversion (incl. the kuery
+ * translation riding into the bucket filter).
+ * ————————————————————————————————————————————————————————————————————————————————————————————
+ */
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { compileSuppressedCustomQueryToBucketMonitor } = require('./custom_query');
+
+describe('v1.2.3 D9 — custom-query exceptions (doc-level fragment)', () => {
+  it('byte identity: exceptions absent and exceptions [] compile identically', () => {
+    const withAbsent = compileCustomQueryToMonitor(luceneRule());
+    const withEmpty = compileCustomQueryToMonitor(luceneRule({ exceptions: [] }));
+    expect(JSON.stringify(withEmpty)).toBe(JSON.stringify(withAbsent));
+  });
+
+  it('lucene rule: the executed query is wrapped and the fragment appended', () => {
+    const monitor = compileCustomQueryToMonitor(
+      luceneRule({ exceptions: [{ field: 'user.name', op: 'equals', values: ['svc-scan'] }] })
+    );
+    expect(monitor.inputs[0].doc_level_input.queries[0].query).toBe(
+      '(url.path:*admin* AND NOT http.response.status_code:200) AND NOT (user.name:"svc-scan")'
+    );
+  });
+
+  it('kuery rule: the TRANSLATION gets the fragment (never the raw DQL)', () => {
+    const monitor = compileCustomQueryToMonitor({
+      name: 'dql rule',
+      severity: 'medium',
+      index: 'logs-*',
+      language: 'kuery',
+      queryText: 'event.outcome:failure and event.category:authentication',
+      exceptions: [{ field: 'source.ip', op: 'cidr', values: ['10.0.0.0/8'] }],
+    });
+    expect(monitor.inputs[0].doc_level_input.queries[0].query).toBe(
+      '((event.outcome:failure) AND (event.category:authentication))' +
+        ' AND NOT (source.ip:"10.0.0.0/8")'
+    );
+  });
+
+  it('invalid exceptions are rejected at validate time, by name', () => {
+    expect(() =>
+      assertValidCustomQueryRule(
+        luceneRule({ exceptions: [{ field: 's', op: 'cidr', values: ['not-a-cidr'] }] })
+      )
+    ).toThrow('"not-a-cidr" is not a valid CIDR');
+  });
+});
+
+describe('v1.2.3 D9 — custom-query suppression (the doc→bucket conversion)', () => {
+  const suppressed = (overrides: Partial<CustomQueryRuleDefinition> = {}) =>
+    luceneRule({
+      suppression: { groupBy: ['source.ip'], window: { value: 10, unit: 'MINUTES' } },
+      ...overrides,
+    });
+
+  it('compileCustomQueryToMonitor REFUSES a suppressed rule by name', () => {
+    expect(() => compileCustomQueryToMonitor(suppressed())).toThrow(
+      'carries suppression — it compiles to a grouped (bucket-level) monitor via ' +
+        'compileSuppressedCustomQueryToBucketMonitor'
+    );
+  });
+
+  it('the converter refuses a rule WITHOUT suppression by name', () => {
+    expect(() => compileSuppressedCustomQueryToBucketMonitor(luceneRule())).toThrow(
+      'has no suppression — compile it through compileCustomQueryToMonitor'
+    );
+  });
+
+  it('golden: the suppressed bucket monitor for a KUERY rule (translated Lucene as the filter)', () => {
+    expect(
+      compileSuppressedCustomQueryToBucketMonitor({
+        name: 'Failed auth grouped',
+        severity: 'high',
+        index: 'fosstlsoc-logs-*',
+        language: 'kuery',
+        queryText: 'event.outcome:failure and event.category:authentication',
+        suppression: { groupBy: ['source.ip'], window: { value: 10, unit: 'MINUTES' } },
+      })
+    ).toEqual({
+      type: 'monitor',
+      name: 'Failed auth grouped',
+      monitor_type: 'bucket_level_monitor',
+      enabled: true,
+      schedule: { period: { interval: 10, unit: 'MINUTES' } },
+      inputs: [
+        {
+          search: {
+            indices: ['fosstlsoc-logs-*'],
+            query: {
+              size: 0,
+              query: {
+                bool: {
+                  filter: [
+                    {
+                      range: {
+                        '@timestamp': {
+                          from: '{{period_end}}||-10m',
+                          to: '{{period_end}}',
+                          include_lower: true,
+                          include_upper: true,
+                          format: 'epoch_millis',
+                        },
+                      },
+                    },
+                    {
+                      query_string: {
+                        query: '(event.outcome:failure) AND (event.category:authentication)',
+                        analyze_wildcard: true,
+                      },
+                    },
+                  ],
+                },
+              },
+              aggregations: {
+                tlsoc_groups: {
+                  composite: {
+                    size: 100,
+                    sources: [
+                      { source_ip: { terms: { field: 'source.ip', missing_bucket: false } } },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+      triggers: [
+        {
+          bucket_level_trigger: {
+            name: 'Failed auth grouped matched',
+            severity: '2',
+            condition: {
+              parent_bucket_path: 'tlsoc_groups',
+              buckets_path: { _count: '_count' },
+              script: { source: 'params._count >= 1', lang: 'painless' },
+            },
+          },
+        },
+      ],
+    });
+  });
+
+  it('exceptions ride structured (must_not clause), NEVER folded into the Lucene filter', () => {
+    const monitor = compileSuppressedCustomQueryToBucketMonitor(
+      suppressed({ exceptions: [{ field: 'source.ip', op: 'cidr', values: ['10.0.0.0/8'] }] })
+    );
+    const filter = monitor.inputs[0].search.query.query.bool.filter as Array<
+      Record<string, unknown>
+    >;
+    expect(filter[1]).toEqual({
+      query_string: {
+        query: 'url.path:*admin* AND NOT http.response.status_code:200',
+        analyze_wildcard: true,
+      },
+    });
+    expect(filter[2]).toEqual({
+      bool: { must_not: [{ term: { 'source.ip': '10.0.0.0/8' } }] },
+    });
+  });
+
+  it('a stale groupBy mirror is rejected by name', () => {
+    expect(() =>
+      compileSuppressedCustomQueryToBucketMonitor(suppressed({ groupBy: ['user.name'] }))
+    ).toThrow('groupBy must mirror suppression.groupBy (source.ip)');
+  });
+});

@@ -3,9 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { RuleMetadataFields, Severity, TimeWindow } from './types';
-import { SEVERITY_TO_MONITOR_SEVERITY, assertValidTimeWindowUnit, slugify } from './internal';
+import { RuleMetadataFields, Severity, SuppressionConfig, TimeWindow } from './types';
+import {
+  SEVERITY_TO_MONITOR_SEVERITY,
+  assertValidSuppression,
+  assertValidTimeWindowUnit,
+  slugify,
+} from './internal';
 import { DocLevelMonitor } from './monitor';
+import { BucketLevelMonitor } from './bucket_monitor';
+import { compileAggregationRule } from './agg_compile';
+import {
+  applyExceptionsToLucene,
+  exceptionsToFilterClause,
+  validateExceptions,
+} from './exceptions';
 import { formatDqlTranslationErrors, translateDqlToLucene } from './dql_to_lucene';
 
 /**
@@ -42,6 +54,19 @@ export interface CustomQueryRuleDefinition extends RuleMetadataFields {
   queryText: string;
   /** Optional schedule cadence R. Absent = the legacy 1-minute doc-level default. */
   runEvery?: TimeWindow;
+  /**
+   * OPTIONAL alert suppression (v1.2.3 D9). ABSENT = the legacy doc-level compile path —
+   * byte-identical output. PRESENT = the rule compiles through
+   * {@link compileSuppressedCustomQueryToBucketMonitor} to a bucket-level monitor instead
+   * (see SuppressionConfig in types.ts for semantics and the enrichment trade-off).
+   */
+  suppression?: SuppressionConfig;
+  /**
+   * Suppressed rules only: MUST mirror `suppression.groupBy` (validated when both are present).
+   * The alerts join reads `rule.groupBy` to label bucket keys in the flyout — the builder
+   * stamps it automatically alongside `suppression`.
+   */
+  groupBy?: string[];
 }
 
 /**
@@ -96,6 +121,23 @@ export function assertValidCustomQueryRule(rule: CustomQueryRuleDefinition): voi
     }
     assertValidTimeWindowUnit(rule.runEvery, 'run-every', `Custom-query rule "${rule.name}"`);
   }
+  // v1.2.3 D9 (both additive — a rule WITHOUT them validates exactly as before):
+  if (rule.exceptions !== undefined) {
+    validateExceptions(rule.exceptions, `Custom-query rule "${rule.name}"`);
+  }
+  if (rule.suppression !== undefined) {
+    assertValidSuppression(rule.suppression, `Custom-query rule "${rule.name}"`);
+    if (
+      rule.groupBy !== undefined &&
+      (rule.groupBy.length !== rule.suppression.groupBy.length ||
+        rule.groupBy.some((f, i) => f !== rule.suppression!.groupBy[i]))
+    ) {
+      throw new Error(
+        `Custom-query rule "${rule.name}": groupBy must mirror suppression.groupBy ` +
+          `(${rule.suppression.groupBy.join(', ')}) — the alert flyout labels group keys from it.`
+      );
+    }
+  }
   // For DQL, a rule that cannot translate must never validate: surface the translator's
   // rejection here so the registry's validate() catches everything compile would throw.
   if (rule.language === 'kuery') {
@@ -103,11 +145,23 @@ export function assertValidCustomQueryRule(rule: CustomQueryRuleDefinition): voi
   }
 }
 
-/** Compile a custom-query rule to an OpenSearch doc-level Alerting monitor definition. */
+/** Compile a custom-query rule to an OpenSearch doc-level Alerting monitor definition.
+ * v1.2.3 D9: a rule WITH `suppression` is REFUSED by name (it compiles through
+ * {@link compileSuppressedCustomQueryToBucketMonitor} instead — the monitor.ts twin's idiom);
+ * exceptions append the ` AND NOT (…)` fragment to the executed query. The save route
+ * (assertCustomQueryValidates) validates the FULL executed string — compileCustomQueryText's
+ * output WITH the exceptions fragment applied — against the cluster before any monitor exists. */
 export function compileCustomQueryToMonitor(rule: CustomQueryRuleDefinition): DocLevelMonitor {
   assertValidCustomQueryRule(rule);
+  if (rule.suppression) {
+    throw new Error(
+      `Custom-query rule "${rule.name}" carries suppression — it compiles to a grouped ` +
+        '(bucket-level) monitor via compileSuppressedCustomQueryToBucketMonitor, never to a ' +
+        'doc-level monitor (doc-level monitors have no per-field suppression primitive).'
+    );
+  }
   const slug = slugify(rule.name);
-  const query = compileCustomQueryText(rule);
+  const query = applyExceptionsToLucene(compileCustomQueryText(rule), rule.exceptions);
 
   return {
     type: 'monitor',
@@ -146,4 +200,48 @@ export function compileCustomQueryToMonitor(rule: CustomQueryRuleDefinition): Do
       },
     ],
   };
+}
+
+/**
+ * v1.2.3 D9: compile a SUPPRESSED custom-query rule to the bucket-level monitor that executes
+ * it — the monitor.ts conversion's exact twin: the rule's query (for 'kuery', the TRANSLATED
+ * Lucene — compileCustomQueryText) becomes the aggregation filter's query_string, exceptions
+ * ride as the shared `{bool: {must_not}}` clause (structured — never folded into the Lucene, so
+ * CIDR exceptions stay in engine-proven term form on the bucket side), `suppression.groupBy` /
+ * `suppression.window` shape the composite + window, trigger `_count >= 1`. One alert per group
+ * per window; the alert loses per-doc findings/related docs — it carries the group keys instead.
+ */
+export function compileSuppressedCustomQueryToBucketMonitor(
+  rule: CustomQueryRuleDefinition
+): BucketLevelMonitor {
+  assertValidCustomQueryRule(rule);
+  if (!rule.suppression) {
+    throw new Error(
+      `Custom-query rule "${rule.name}" has no suppression — compile it through ` +
+        'compileCustomQueryToMonitor (the doc-level path).'
+    );
+  }
+  const clauses: Array<Record<string, unknown>> = [
+    { query_string: { query: compileCustomQueryText(rule), analyze_wildcard: true } },
+  ];
+  const exceptionClause = exceptionsToFilterClause(rule.exceptions);
+  if (exceptionClause) {
+    clauses.push(exceptionClause);
+  }
+  const monitor = compileAggregationRule({
+    name: rule.name,
+    severity: rule.severity,
+    index: rule.index,
+    filter: { kind: 'dsl', clauses },
+    spec: {
+      by: rule.suppression.groupBy,
+      metrics: [],
+      having: { kind: 'cmp', alias: '_count', op: 'gte', value: 1 },
+    },
+    window: rule.suppression.window,
+    ...(rule.runEvery ? { runEvery: rule.runEvery } : {}),
+  });
+  // Cosmetic override ONLY (the new_terms precedent) — the condition is untouched.
+  monitor.triggers[0].bucket_level_trigger.name = `${rule.name} matched`;
+  return monitor;
 }

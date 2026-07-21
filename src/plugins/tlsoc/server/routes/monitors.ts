@@ -38,10 +38,18 @@ import {
   CustomQueryRuleDefinition,
   compileCustomQueryText,
 } from '../../common/detection/custom_query';
+import { applyExceptionsToLucene } from '../../common/detection/exceptions';
 import { bootstrapSeenValues, deleteSeenValuesDoc, SeenValuesResult } from '../lib/new_terms_state';
 import { validateLuceneQuery } from './detection_validate';
 import { prepareIndicatorMatchRule } from './value_lists';
 import { DETECTION_RULE_SO_TYPE } from '../saved_objects';
+import {
+  RuleHealthInfo,
+  computeRuleHealth,
+  foldErrorAlerts,
+  foldJobsInfo,
+} from '../../common/detection/health';
+import { canExportSigma } from '../../common/detection/export';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -215,6 +223,13 @@ async function assertPplFieldMapAgainstCluster(
  * Lucene (for 'kuery' rules, the translation — belt and braces on top of the client-side subset
  * check) is validated against the cluster's own parser via the shared detection_validate helper.
  * An invalid query or a nothing-matching index both 400 with the parser's/trap's own words.
+ *
+ * v1.2.3 D9 (W4 integration, belt and braces): the executed doc-level string additionally
+ * carries the compiler-generated ` AND NOT (…)` exceptions fragment, so the FULL executed
+ * string — {@link applyExceptionsToLucene} over the pure translation — is what gets validated,
+ * not just the pure half. (Suppressed rules run the PURE text as their bucket filter's
+ * query_string — exceptions ride separately as a structured must_not clause there — so this
+ * validation covers that shape too.)
  */
 async function assertCustomQueryValidates(
   esClient: EsClient,
@@ -223,12 +238,83 @@ async function assertCustomQueryValidates(
   const cqRule = (rule as unknown) as CustomQueryRuleDefinition;
   // prepareMonitor's compile already ran assertValidCustomQueryRule + the DQL translation, so
   // this re-derivation cannot throw here; it yields the exact string the monitor will run.
-  const lucene = compileCustomQueryText(cqRule);
+  const lucene = applyExceptionsToLucene(compileCustomQueryText(cqRule), cqRule.exceptions);
   const verdict = await validateLuceneQuery(esClient, cqRule.index, lucene);
   if (!verdict.valid) {
     throw new RouteError(
       400,
       `The query did not validate against "${cqRule.index}": ${verdict.reason}`
+    );
+  }
+}
+
+/**
+ * v1.2.3 D9 (W4 integration — the suppression save gate): a SUPPRESSED stateless/custom_query
+ * rule compiles to a bucket monitor whose composite terms sources are `suppression.groupBy`
+ * VERBATIM (no fieldMap remap exists on these types) — and a composite terms source on an
+ * analyzed-text field fails at monitor runtime with NO alert and NO error (the silent-dead-rule
+ * class, research_r2 §a). The builder offers aggregatable fields only, but nothing forces a
+ * caller through the builder — so the save path asks the CLUSTER (field_caps, caller
+ * credentials, the assertPplFieldMapAgainstCluster idiom) and 400s BY NAME any group-by field
+ * that is analyzed text, pointing at its keyword subfield when one exists. Keyword/ip/numeric
+ * fields — and fields absent from the matching indices — pass untouched.
+ */
+async function assertSuppressionGroupByAggregatable(
+  esClient: EsClient,
+  rule: Record<string, unknown>
+): Promise<void> {
+  const suppression = (rule as any).suppression as { groupBy?: unknown } | undefined;
+  const groupBy = Array.isArray(suppression?.groupBy)
+    ? (suppression!.groupBy as unknown[]).filter(
+        (f): f is string => typeof f === 'string' && f !== ''
+      )
+    : [];
+  if (groupBy.length === 0) return; // the compile's own validator names an empty group-by
+  const ruleIndex = String((rule as any).index ?? '');
+
+  // Ask about the group-by fields AND their would-be keyword subfields, so the refusal can
+  // point at a real alternative when one exists.
+  const wanted = new Set<string>(groupBy);
+  groupBy.forEach((f) => wanted.add(`${f}.keyword`));
+
+  const noIndices = `No indices currently match "${ruleIndex}", so there is nothing for this rule to run against yet.`;
+  let caps: any;
+  try {
+    const resp = await esClient.fieldCaps({
+      index: ruleIndex,
+      fields: [...wanted],
+      allow_no_indices: true,
+      ignore_unavailable: true,
+    });
+    caps = (resp as any).body ?? {};
+  } catch (err: any) {
+    if ((err?.meta?.statusCode ?? err?.statusCode) === 404) {
+      throw new RouteError(400, noIndices);
+    }
+    throw err;
+  }
+  // Zero matching concrete indices → field_caps "succeeds" having checked NOTHING (the same
+  // trap as _validate's 0-shards) — refuse, mirroring the ppl gate's no-matching-indices 400.
+  if (((caps?.indices as string[] | undefined) ?? []).length === 0) {
+    throw new RouteError(400, noIndices);
+  }
+
+  const capsFields: Record<string, Record<string, unknown>> = caps?.fields ?? {};
+  const typesOf = (name: string): string[] => Object.keys(capsFields[name] ?? {});
+
+  for (const field of groupBy) {
+    const analyzed = typesOf(field).find((t) => ANALYZED_TEXT_TYPES.has(t));
+    if (analyzed === undefined) continue; // keyword/ip/date/numeric (or absent) — passes as-is
+    const hasKeywordSibling = typesOf(`${field}.keyword`).length > 0;
+    throw new RouteError(
+      400,
+      `Suppression group-by field "${field}" is analyzed text ("${analyzed}") on ` +
+        `"${ruleIndex}" — grouping on it would fail silently at monitor runtime with no ` +
+        `alert. ${
+          hasKeywordSibling
+            ? `Use its keyword subfield "${field}.keyword" instead.`
+            : 'Use a keyword field instead (this field has no keyword subfield).'
+        }`
     );
   }
 }
@@ -305,6 +391,13 @@ async function prepareMonitor(
       ) as unknown) as Record<string, any>;
     }
   }
+  // v1.2.3 D9: a SUPPRESSED doc-kind rule's bucket monitor groups on suppression.groupBy
+  // verbatim — gate those fields against the cluster's field_caps (see the assert's moduledoc).
+  // Runs IN ADDITION to the custom_query text validation above (a suppressed custom_query rule
+  // gets both gates).
+  if ((mode === 'stateless' || mode === 'custom_query') && (rule as any).suppression) {
+    await assertSuppressionGroupByAggregatable(esClient, rule);
+  }
 
   let executionAlias: string | undefined;
   let executionTargets: string[] | undefined;
@@ -360,6 +453,11 @@ const STATELESS_SYNC_DEBOUNCE_MS = 60000;
  */
 export function needsExecutionTargetSync(attributes: DetectionRuleAttributes): boolean {
   if (!isValidMode(attributes.mode)) return false;
+  // v1.2.3 D9: a rule WITH suppression compiles to a BUCKET monitor regardless of its type's
+  // static monitorKind (the registry's suppression dispatch) — it takes the raw pattern and
+  // needs no aliasing. Without this, every sweep would log a spurious "has no doc_level_input"
+  // warn for each suppressed rule.
+  if ((attributes.rule as any)?.suppression) return false;
   if (attributes.mode === 'indicator_match') {
     return ((attributes.rule as any)?.listMode as string) === 'inline';
   }
@@ -460,6 +558,68 @@ export async function syncStatelessMonitorTargets(
   }
 }
 
+/** Tag limits (v1.2.3 D8): enough for real triage taxonomies, small enough to render as badges. */
+const MAX_TAGS_PER_RULE = 20;
+const MAX_TAG_LENGTH = 50;
+
+/**
+ * Normalize/validate a rule's OPTIONAL `tags` (v1.2.3 D8) — trim, drop empties, dedupe
+ * (case-sensitive, order-preserving), and reject-by-name anything outside the contract
+ * (non-array, non-string entries, a tag over {@link MAX_TAG_LENGTH} chars, more than
+ * {@link MAX_TAGS_PER_RULE} tags). `tags` lives INSIDE the unmapped `rule` SO attribute
+ * (the zero-migration idiom), so this route-level check is the ONLY schema gate it has.
+ * Pure + exported so the contract is unit-pinned (needsExecutionTargetSync precedent).
+ *
+ * Returns `{}` when the input is absent, `{ tags }` when normalized (an all-empty input
+ * normalizes to `{ tags: [] }` — the caller drops the field), or `{ error }` to 400 with.
+ */
+export function normalizeRuleTags(input: unknown): { tags?: string[]; error?: string } {
+  if (input === undefined || input === null) return {};
+  if (!Array.isArray(input)) {
+    return { error: 'rule.tags must be an array of strings.' };
+  }
+  const tags: string[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < input.length; i++) {
+    const raw = input[i];
+    if (typeof raw !== 'string') {
+      return { error: `rule.tags[${i}] is not a string.` };
+    }
+    const tag = raw.trim();
+    if (tag === '') continue; // whitespace-only tags are dropped, not fatal
+    if (tag.length > MAX_TAG_LENGTH) {
+      return {
+        error: `Tag "${tag.slice(0, MAX_TAG_LENGTH)}…" is longer than ${MAX_TAG_LENGTH} characters.`,
+      };
+    }
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    tags.push(tag);
+  }
+  if (tags.length > MAX_TAGS_PER_RULE) {
+    return {
+      error: `Too many tags (${tags.length}) — a rule can carry at most ${MAX_TAGS_PER_RULE}.`,
+    };
+  }
+  return { tags };
+}
+
+/**
+ * Apply {@link normalizeRuleTags} to a save body's rule IN PLACE. Throws a 400 RouteError on a
+ * named violation; writes the normalized list back (or removes an empty one, so "no tags" is
+ * always the ABSENT field — the zero-migration default). Shared by CREATE and UPDATE.
+ */
+function applyRuleTags(rule: Record<string, unknown>): void {
+  const { tags, error } = normalizeRuleTags((rule as any).tags);
+  if (error) throw new RouteError(400, error);
+  if (tags === undefined) return;
+  if (tags.length === 0) {
+    delete (rule as any).tags;
+  } else {
+    (rule as any).tags = tags;
+  }
+}
+
 /** Is `name` already used by ANOTHER TLSOC detection (excluding `excludeSoId`)? */
 async function nameConflict(
   soClient: SavedObjectsClientContract,
@@ -488,6 +648,12 @@ const idParam = { params: schema.object({ soId: schema.string() }) };
 const toggleValidation = {
   params: schema.object({ soId: schema.string() }),
   body: schema.object({ enabled: schema.boolean() }),
+};
+const tagsValidation = {
+  params: schema.object({ soId: schema.string() }),
+  // The full tag contract (trim/dedupe/caps) is enforced by normalizeRuleTags in the handler, so
+  // its violations 400 BY NAME instead of as generic schema errors.
+  body: schema.object({ tags: schema.arrayOf(schema.string()) }),
 };
 
 /** Register all detection-monitor management routes (create / list / get / update / delete). */
@@ -524,6 +690,7 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
     let executionTargets: string[] | undefined;
     let seenSnapshot: SeenValuesResult | undefined;
     try {
+      applyRuleTags(rule); // v1.2.3 D8: normalize/reject rule.tags BY NAME before anything else
       if (await nameConflict(soClient, name)) {
         return response.customError({
           statusCode: 409,
@@ -636,10 +803,22 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
     }
   });
 
-  // LIST — GET /api/tlsoc/detection/monitors
-  router.get({ path: '/api/tlsoc/detection/monitors', validate: false }, async (context, request, response) => {
+  // LIST — GET /api/tlsoc/detection/monitors[?includeRule=true]
+  // v1.2.3 D8: rows additionally carry threat/riskScore/tags (read from the in-memory rule),
+  // updatedAt (core's SO stamp), sigmaEligible (per-row export gating), and the HONEST `health`
+  // block. EVERY engine read below is best-effort and degrades to undefined — the list itself
+  // NEVER fails because of them (the PROB-19 discipline).
+  router.get(
+    {
+      path: '/api/tlsoc/detection/monitors',
+      validate: { query: schema.object({ includeRule: schema.maybe(schema.string()) }) },
+    },
+    async (context, request, response) => {
     const soClient = context.core.savedObjects.client;
     const esClient = context.core.opensearch.client.asCurrentUser;
+    // Opt-in full-rule payload for the native export flow — the SO scan already holds `rule`
+    // in memory, so this is one flag, not N extra calls.
+    const includeRule = (request.query as { includeRule?: string })?.includeRule === 'true';
     try {
       const found = await soClient.find<DetectionRuleAttributes>({ type: TYPE, perPage: 1000 });
       const rules = found.saved_objects.map((so) => ({
@@ -652,11 +831,26 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
         monitorId: so.attributes.monitorId,
         enabled: so.attributes.enabled ?? true,
         createdAt: so.attributes.createdAt,
+        // v1.2.3 D8 additive fields — all read from data already in memory. `threat` is returned
+        // AS-IS from the SO rule (the W4c coverage-matrix contract); tags/riskScore likewise.
+        threat: (so.attributes.rule as any)?.threat,
+        riskScore: (so.attributes.rule as any)?.riskScore,
+        tags: (so.attributes.rule as any)?.tags,
+        updatedAt: so.updated_at,
+        sigmaEligible: canExportSigma(so.attributes.mode, so.attributes.rule),
+        ...(includeRule ? { rule: so.attributes.rule } : {}),
+        health: undefined as RuleHealthInfo | undefined, // computed below, after the live reads
       }));
 
       // Best-effort live reconciliation: the SO's `enabled` can drift from the monitor's actual
       // state (e.g. someone toggled it directly in Alerting). Live wins when we can read it;
       // any failure here must never fail the list request — the SO values just stand.
+      // v1.2.3 D8: the SAME search also carries enabled_time/last_update_time for the health
+      // block — zero extra round-trips (research_r6 A3).
+      const liveMeta = new Map<
+        string,
+        { enabled?: boolean; enabledTime?: number; lastUpdateTime?: number }
+      >();
       try {
         const monitorIds = rules.map((r) => r.monitorId).filter((id): id is string => !!id);
         if (monitorIds.length > 0) {
@@ -665,23 +859,76 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
             path: `${MONITOR_API}/_search`,
             body: {
               query: { ids: { values: monitorIds } },
-              _source: { includes: ['monitor.enabled'] },
+              _source: {
+                includes: [
+                  'monitor.enabled',
+                  'monitor.enabled_time',
+                  'monitor.last_update_time',
+                ],
+              },
             },
           });
           const hits: any[] = (searchResp as any).body?.hits?.hits ?? [];
-          const liveEnabled = new Map<string, boolean>();
           hits.forEach((hit) => {
-            const val = hit?._source?.monitor?.enabled;
-            if (typeof val === 'boolean') liveEnabled.set(hit._id, val);
+            const monitor = hit?._source?.monitor;
+            if (!monitor || typeof hit._id !== 'string') return;
+            liveMeta.set(hit._id, {
+              enabled: typeof monitor.enabled === 'boolean' ? monitor.enabled : undefined,
+              enabledTime:
+                typeof monitor.enabled_time === 'number' ? monitor.enabled_time : undefined,
+              lastUpdateTime:
+                typeof monitor.last_update_time === 'number'
+                  ? monitor.last_update_time
+                  : undefined,
+            });
           });
           rules.forEach((r) => {
-            const live = liveEnabled.get(r.monitorId);
+            const live = liveMeta.get(r.monitorId)?.enabled;
             if (typeof live === 'boolean') r.enabled = live;
           });
         }
       } catch (err) {
         logger.warn(`tlsoc list: live enabled-state reconciliation skipped: ${err.message}`);
       }
+
+      // Health read 1 (best-effort): "Last run" — ONLY available for ENABLED monitors, via the
+      // scheduler stats' jobs_info (the engine has no run history at all — health.ts moduledoc).
+      let lastRuns: Record<string, number> = {};
+      try {
+        const statsResp = await esClient.transport.request({
+          method: 'GET',
+          path: '/_plugins/_alerting/stats',
+        });
+        lastRuns = foldJobsInfo((statsResp as any).body);
+      } catch (err) {
+        logger.warn(`tlsoc list: alerting stats (last run) skipped: ${err.message}`);
+      }
+
+      // Health read 2 (best-effort): live failures — ONE alerts-API pass filtered to ERROR
+      // alerts, folded per monitor by the pure helper (un-ended = still failing). Same 1000
+      // honesty cap as everywhere else this plugin reads the alerts API.
+      let lastErrors: Record<string, { message: string; at?: number }> = {};
+      try {
+        const alertsResp = await esClient.transport.request({
+          method: 'GET',
+          path: '/_plugins/_alerting/monitors/alerts',
+          querystring: { size: 1000, alertState: 'ERROR' },
+        });
+        lastErrors = foldErrorAlerts((alertsResp as any).body?.alerts ?? []);
+      } catch (err) {
+        logger.warn(`tlsoc list: ERROR-alert health fold skipped: ${err.message}`);
+      }
+
+      rules.forEach((r) => {
+        const meta = liveMeta.get(r.monitorId);
+        r.health = computeRuleHealth({
+          enabled: r.enabled,
+          lastRun: lastRuns[r.monitorId],
+          lastError: lastErrors[r.monitorId],
+          enabledTime: meta?.enabledTime,
+          lastUpdateTime: meta?.lastUpdateTime,
+        });
+      });
 
       rules.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
       return response.ok({ body: { rules } });
@@ -774,6 +1021,7 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
       let executionTargets: string[] | undefined;
       let seenSnapshot: SeenValuesResult | undefined;
       try {
+        applyRuleTags(rule); // v1.2.3 D8: same named tag gate as CREATE
         // Dedup EXCLUDING self — editing a rule under its own name must not 409.
         if (await nameConflict(soClient, name, soId)) {
           return response.customError({
@@ -916,6 +1164,15 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
         // The superseded monitor of a cross-kind swap (D-B). Its still-active alerts move to the
         // engine's DELETED state — engine behavior, accepted (the replacement monitor re-fires
         // on the next run for anything still matching).
+        //
+        // KNOWN DEBT (v1.3): on a doc→bucket swap (e.g. suppression turned ON, or an
+        // indicator_match list crossing the inline cap) the SO overwrite above intentionally
+        // drops executionAlias/executionTargets, so the per-index aliases the OLD doc-level
+        // monitor ran against are never orphan-swept here (DELETE's cleanup reads the current
+        // SO, which no longer records them). Harmless dot-free alias leak — the aliases point at
+        // the user's own indices and other doc-kind rules on the same pattern reuse them.
+        // Running DELETE's still-used-elsewhere alias sweep on the swap is deliberate v1.3 work,
+        // not a quick inline copy of that 40-line block.
         await esClient.transport
           .request({ method: 'DELETE', path: `${MONITOR_API}/${monitorId}` })
           .catch((e: any) => {
@@ -1010,6 +1267,56 @@ export function registerMonitorRoutes(router: IRouter, logger: Logger, auth?: Ht
               enabled ? 'enabled' : 'disabled'
             }, but recording it failed: ${err.message}`,
           },
+        });
+      }
+    }
+  );
+
+  // TAGS — POST /api/tlsoc/detection/monitors/{soId}/_tags (v1.2.3 D8). The minimal-touch
+  // sibling of `_toggle` (research_r6 A4): tags live INSIDE the unmapped SO `rule` attribute and
+  // do not affect compilation, so this REPLACES rule.tags with the normalized body list and
+  // NEVER touches the monitor — no recompile, no cluster gates, safe to loop from the bulk UI.
+  router.post(
+    { path: '/api/tlsoc/detection/monitors/{soId}/_tags', validate: tagsValidation },
+    async (context, request, response) => {
+      if (!callerHasAnyRole(request, auth, DETECTION_WRITERS)) {
+        return forbidden(response, 'tag detections');
+      }
+      const { soId } = request.params as { soId: string };
+      const { tags: rawTags } = request.body as { tags: string[] };
+      const soClient = context.core.savedObjects.client;
+
+      const { tags, error } = normalizeRuleTags(rawTags);
+      if (error) {
+        return response.badRequest({ body: { message: error } });
+      }
+      const normalized = tags ?? [];
+
+      let so;
+      try {
+        so = await soClient.get<DetectionRuleAttributes>(TYPE, soId);
+      } catch (err) {
+        return response.notFound({ body: { message: `Detection ${soId} not found.` } });
+      }
+
+      try {
+        const rule: Record<string, unknown> = { ...(so.attributes.rule as any) };
+        if (normalized.length === 0) {
+          delete rule.tags; // "no tags" is always the ABSENT field (the zero-migration default)
+        } else {
+          rule.tags = normalized;
+        }
+        await soClient.create<DetectionRuleAttributes>(
+          TYPE,
+          { ...so.attributes, rule: (rule as unknown) as DetectionRuleAttributes['rule'] },
+          { id: soId, overwrite: true }
+        );
+        return response.ok({ body: { tags: normalized } });
+      } catch (err) {
+        logger.error(`tlsoc tags: SO write failed for ${soId}: ${err.message}`);
+        return response.customError({
+          statusCode: 500,
+          body: { message: `Could not update the detection's tags: ${err.message}` },
         });
       }
     }

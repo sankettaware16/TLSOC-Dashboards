@@ -15,8 +15,9 @@
 
 export * from './types';
 export { buildSigmaRule, compileToSigma } from './sigma';
-export { compileToDocLevelMonitor } from './monitor';
+export { compileSuppressedStatelessToBucketMonitor, compileToDocLevelMonitor } from './monitor';
 export type { DocLevelMonitor, DocLevelQuery } from './monitor';
+export { compileSuppressedCustomQueryToBucketMonitor } from './custom_query';
 export { conditionToLucene, conditionGroupToLucene, ANALYZED_TEXT_TYPES } from './lucene';
 export { buildWindow } from './window';
 export type { CompiledWindow } from './window';
@@ -87,3 +88,32 @@ export {
   pickIndicatorListMode,
 } from './indicator_match';
 export type { IndicatorMatchRuleDefinition, IndicatorListMode } from './indicator_match';
+// v1.2.3 W4a — the D8 honest health model + native/Sigma export surfaces (W4 integration:
+// consumers may import the submodules directly too — the custom_query precedent — but the
+// barrel re-exports keep the public surface consistent with every earlier wave's).
+export { computeRuleHealth, foldErrorAlerts, foldJobsInfo } from './health';
+export type { RuleHealthInfo, RuleHealthStatus, RuleLastError } from './health';
+export {
+  NATIVE_EXPORT_KIND,
+  NATIVE_EXPORT_VERSION,
+  buildNativeBulkExport,
+  buildNativeEnvelope,
+  canExportSigma,
+  parseNativeImport,
+  sigmaExportUnavailableReason,
+} from './export';
+export type { NativeImportResult, NativeRuleEnvelope } from './export';
+// v1.2.3 W4b — the D9 exceptions emitters (suppression's converters are exported with their
+// compile modules above).
+export {
+  MAX_EXCEPTION_ENTRIES,
+  applyExceptionsToLucene,
+  exceptionFieldNames,
+  exceptionsToFilterClause,
+  exceptionsToLucene,
+  exceptionsToMustNot,
+  isValidCidr,
+  ruleHasExceptions,
+  validateExceptions,
+} from './exceptions';
+export type { ExceptionEntry, ExceptionOp } from './exceptions';
