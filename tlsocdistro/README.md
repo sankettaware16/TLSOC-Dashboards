@@ -37,7 +37,7 @@ The dashboards are a hard fork, so they ship as an image you build once from sou
 
 ```bash
 # from the OpenSearch-Dashboards repo root:
-bash tlsocdistro/dashboards/build-image.sh      # → tlsoc-dashboards:1.2.3 (the current default tag)
+bash tlsocdistro/dashboards/build-image.sh      # → tlsoc-dashboards:1.2.4 (the current default tag)
 ```
 
 Copy the image to your deployment host (or push to a registry) and set
