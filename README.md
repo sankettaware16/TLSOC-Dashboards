@@ -119,8 +119,8 @@ Logstash**, plus the parsing engine and an endpoint onboarding script. The short
 ```bash
 # 1. Download the deployment kit (~19 KB — no git, no source, no compilation;
 #    all images incl. TLSOC pull automatically from public registries)
-curl -LO https://github.com/sankettaware16/TLSOC-Dashboards/releases/download/v1.3.1/tlsocdistro-1.3.1.tar.gz
-tar xzf tlsocdistro-1.3.1.tar.gz && cd tlsocdistro-1.3.1
+curl -LO https://github.com/sankettaware16/TLSOC-Dashboards/releases/download/v1.3.2/tlsocdistro-1.3.2.tar.gz
+tar xzf tlsocdistro-1.3.2.tar.gz && cd tlsocdistro-1.3.2
 
 # 2. Install the FOSS SOC Engine (parses raw logs → ECS)
 #    https://github.com/sankettaware16/foss-soc-engine
@@ -133,11 +133,11 @@ sudo ./install.sh
 sudo bash tlsoc-onboard.sh
 ```
 
-Prefer working from the repo instead? `git clone --depth 1 --branch v1.3.1
+Prefer working from the repo instead? `git clone --depth 1 --branch v1.3.2
 https://github.com/sankettaware16/TLSOC-Dashboards.git` and use its `tlsocdistro/` the same
 way (or build the image yourself: `bash tlsocdistro/dashboards/build-image.sh`).
 
-Then open `http://<HOST_IP>:5601/`, log in, and the Overview app walks you through the rest.
+Then open `https://<HOST_IP>:5601/` (self-signed certificate — the browser warns once), log in, and the Overview app walks you through the rest.
 **Full instructions, pipeline verification, retention tuning, and production hardening:**
 [`tlsocdistro/README.md`](tlsocdistro/README.md).
 
@@ -181,7 +181,7 @@ This repository is the SOC console — one component of the TLSOC stack:
   (see [CONTRIBUTING.md](CONTRIBUTING.md) for what to include).
 - **Security vulnerabilities** → report **privately** per [SECURITY.md](SECURITY.md) — never
   in a public issue.
-- **Versioning**: TLSOC product releases are tagged `v1.x` (this is `v1.3.1`; the version is
+- **Versioning**: TLSOC product releases are tagged `v1.x` (this is `v1.3.2`; the version is
   shown in the UI's Help menu). The underlying platform code is based on the OpenSearch
   Dashboards 3.x line, which is why `package.json` carries a `3.x` platform version.
 
