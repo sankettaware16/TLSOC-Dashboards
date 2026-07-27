@@ -117,22 +117,25 @@ The supported way to run TLSOC is the bundled one-click distribution in
 Logstash**, plus the parsing engine and an endpoint onboarding script. The short version:
 
 ```bash
-# 1. Get the deployment files (the image itself is prebuilt — no compilation needed)
-git clone --depth 1 --branch v1.3.1 https://github.com/sankettaware16/TLSOC-Dashboards.git
-cd TLSOC-Dashboards
-#    (the TLSOC Dashboards image ghcr.io/sankettaware16/tlsoc-dashboards:1.3.0 is pulled
-#     automatically; to build it yourself instead: bash tlsocdistro/dashboards/build-image.sh)
+# 1. Download the deployment kit (~19 KB — no git, no source, no compilation;
+#    all images incl. TLSOC pull automatically from public registries)
+curl -LO https://github.com/sankettaware16/TLSOC-Dashboards/releases/download/v1.3.1/tlsocdistro-1.3.1.tar.gz
+tar xzf tlsocdistro-1.3.1.tar.gz && cd tlsocdistro-1.3.1
 
 # 2. Install the FOSS SOC Engine (parses raw logs → ECS)
 #    https://github.com/sankettaware16/foss-soc-engine
 
 # 3. Start the stack
-cd tlsocdistro && cp .env.example .env   # set passwords
+cp .env.example .env                     # set OPENSEARCH_ADMIN_PASSWORD
 sudo ./install.sh
 
 # 4. Onboard an endpoint (run ON the endpoint — agentless)
 sudo bash tlsoc-onboard.sh
 ```
+
+Prefer working from the repo instead? `git clone --depth 1 --branch v1.3.1
+https://github.com/sankettaware16/TLSOC-Dashboards.git` and use its `tlsocdistro/` the same
+way (or build the image yourself: `bash tlsocdistro/dashboards/build-image.sh`).
 
 Then open `http://<HOST_IP>:5601/`, log in, and the Overview app walks you through the rest.
 **Full instructions, pipeline verification, retention tuning, and production hardening:**
