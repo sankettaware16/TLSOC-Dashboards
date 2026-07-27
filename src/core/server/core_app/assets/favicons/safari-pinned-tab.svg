@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- TLSOC placeholder Safari pinned-tab mask (single-color shield silhouette). -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <path d="M6 5 H26 A2 2 0 0 1 28 7 V14.5 C28 22 22.6 27.4 16 30 C9.4 27.4 4 22 4 14.5 V7 A2 2 0 0 1 6 5 Z"/>
+<!-- TLSOC Safari pinned-tab mask — single-color silhouette of the IITB Trust Lab "TL" mark. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 8 181 181">
+  <path d="M22 45 H92 V152 H70 V65 H22 Z M106 45 H129 V133 H179 V152 H106 Z" fill="#000000"/>
 </svg>

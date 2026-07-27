@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- TLSOC placeholder wordmark for light backgrounds. Replace with the official asset at this same path later. -->
+<!-- TLSOC wordmark for light backgrounds — the official IITB Trust Lab "TL" mark
+     (vectorized from iitb_trust_lab_logo.jpeg) + the product name. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="120" height="32" viewBox="0 0 120 32" role="img" aria-label="TLSOC">
-  <path d="M6 5 H26 A2 2 0 0 1 28 7 V14.5 C28 22 22.6 27.4 16 30 C9.4 27.4 4 22 4 14.5 V7 A2 2 0 0 1 6 5 Z" fill="#C266FF"/>
-  <path d="M8.5 15.5 H11.5 L13.5 11 L17 20 L19 15.5 H23.5" fill="none" stroke="#6D28D9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="40" y="22" font-family="'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="19" font-weight="700" letter-spacing="1.5" fill="#6D28D9">TLSOC</text>
+  <g transform="translate(-2.4,-3.7) scale(0.2)">
+    <path d="M22 45 H92 V152 H70 V65 H22 Z" fill="#5577D1"/>
+    <path d="M106 45 H129 V133 H179 V152 H106 Z" fill="#7493C1"/>
+  </g>
+  <text x="40" y="22" font-family="'Inter','Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="19" font-weight="700" letter-spacing="1.5" fill="#1D2A4D">TLSOC</text>
 </svg>

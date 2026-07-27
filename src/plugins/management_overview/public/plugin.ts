@@ -63,7 +63,7 @@ export class ManagementOverViewPlugin
       title: i18n.translate('management.overview.overviewTitle', {
         defaultMessage: 'Overview',
       }),
-      icon: '/ui/logos/opensearch_mark.svg',
+      icon: '/ui/logos/tlsoc_mark.svg',
       order: 9000,
       category: DEFAULT_APP_CATEGORIES.management,
       navLinkStatus: coreSetup.chrome.navGroup.getNavGroupEnabled()

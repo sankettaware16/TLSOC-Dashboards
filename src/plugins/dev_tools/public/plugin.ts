@@ -127,7 +127,7 @@ export class DevToolsPlugin implements Plugin<DevToolsSetup> {
       id: this.id,
       title: this.title,
       updater$: this.appStateUpdater,
-      icon: '/ui/logos/opensearch_mark.svg',
+      icon: '/ui/logos/tlsoc_mark.svg',
       /* the order of dev tools, it shows as last item of management section */
       order: 9070,
       category: DEFAULT_APP_CATEGORIES.management,

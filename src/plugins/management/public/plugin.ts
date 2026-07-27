@@ -98,7 +98,7 @@ export class ManagementPlugin
       id: MANAGEMENT_APP_ID,
       title: this.title,
       order: 9030,
-      icon: '/ui/logos/opensearch_mark.svg',
+      icon: '/ui/logos/tlsoc_mark.svg',
       category: DEFAULT_APP_CATEGORIES.management,
       updater$: this.appUpdater,
       navLinkStatus: core.chrome.navGroup.getNavGroupEnabled()
