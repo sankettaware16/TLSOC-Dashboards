@@ -36,6 +36,28 @@ endpoints ──rsyslog/omkafka──▶ Kafka ──▶ FOSS SOC Engine ──�
  (agentless)                 (buffer)   (parse → ECS)       (ship)      (store/query)     (the SOC UI)
 ```
 
+## See it in action
+
+**A fresh install greets you with the onboarding cockpit** — it explains the pipeline and walks
+you through forwarding your first endpoint, then turns into the live SOC overview as soon as
+events land:
+
+![Security operations overview with onboarding guide](docs/screenshots/overview-onboarding.png)
+
+**Security dashboards over ECS-normalized events** (shown here on the bundled sample telemetry
+with two seeded attacks):
+
+![Sample security overview dashboard](docs/screenshots/sample-security-dashboard.png)
+
+**The no-code detection builder** — pick one of six rule types, test it live against your own
+data, and save; it compiles to a native alerting monitor:
+
+![New detection rule type picker](docs/screenshots/detection-builder.png)
+
+**Investigations** — full-text hunting across every parsed field, scoped to your workspace:
+
+![Investigations search across ECS events](docs/screenshots/investigations-search.png)
+
 ## Why TLSOC?
 
 Universities and smaller organizations face the same attacks as enterprises, but commercial
