@@ -117,14 +117,15 @@ The supported way to run TLSOC is the bundled one-click distribution in
 Logstash**, plus the parsing engine and an endpoint onboarding script. The short version:
 
 ```bash
-# 1. Build the TLSOC Dashboards image (one-time, on a build machine with Node 22, ~8 GB RAM)
-bash tlsocdistro/dashboards/build-image.sh
+# 1. Get the TLSOC Dashboards image — prebuilt, no compilation needed
+docker pull ghcr.io/sankettaware16/tlsoc-dashboards:1.3.0
+#    (or build it yourself from this repo: bash tlsocdistro/dashboards/build-image.sh)
 
 # 2. Install the FOSS SOC Engine (parses raw logs → ECS)
 #    https://github.com/sankettaware16/foss-soc-engine
 
 # 3. Start the stack
-cd tlsocdistro && cp .env.example .env   # set passwords, image tag
+cd tlsocdistro && cp .env.example .env   # set passwords
 sudo ./install.sh
 
 # 4. Onboard an endpoint (run ON the endpoint — agentless)

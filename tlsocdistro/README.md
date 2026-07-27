@@ -31,18 +31,25 @@ Agentless: endpoints only run the standard rsyslog Kafka forwarder — nothing e
 
 ## Install (4 steps)
 
-### 1. Build the TLSOC Dashboards image (one-time, ~20–40 min)
+### 1. Get the TLSOC Dashboards image
 
-The dashboards are a hard fork, so they ship as an image you build once from source:
+**Option A — pull the prebuilt image (default, ~2 min).** The `.env.example` already points at
+the public image, so Docker pulls it automatically on `install.sh`:
 
 ```bash
-# from the OpenSearch-Dashboards repo root:
-bash tlsocdistro/dashboards/build-image.sh      # → tlsoc-dashboards:1.3.0 (the current default tag)
+docker pull ghcr.io/sankettaware16/tlsoc-dashboards:1.3.0    # optional pre-pull
 ```
 
-Copy the image to your deployment host (or push to a registry) and set
-`TLSOC_DASHBOARDS_IMAGE` in `.env` to match. (For a quick pipeline test only, you may point it at a
-stock `opensearchproject/opensearch-dashboards` image, but you lose the TLSOC UI.)
+**Option B — build it from source (one-time, ~20–40 min).** For air-gapped hosts or custom
+builds:
+
+```bash
+# from the TLSOC-Dashboards repo root (Node 22, ~8 GB RAM):
+bash tlsocdistro/dashboards/build-image.sh      # → tlsoc-dashboards:1.3.0
+```
+
+Then set `TLSOC_DASHBOARDS_IMAGE=tlsoc-dashboards:1.3.0` in `.env` (and copy the image to your
+deployment host or your own registry if you build elsewhere).
 
 ### 2. Install the FOSS SOC Engine on this host
 
