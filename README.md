@@ -10,6 +10,13 @@
   Apache-2.0. No agents on endpoints. No per-GB pricing. Your logs stay on your hardware.
 </p>
 
+<p align="center">
+  <a href="https://github.com/sankettaware16/TLSOC-Dashboards/releases/latest"><img src="https://img.shields.io/github/v/release/sankettaware16/TLSOC-Dashboards?label=release&color=5577D1" alt="Latest release"/></a>
+  <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0"/></a>
+  <a href="https://github.com/opensearch-project/OpenSearch-Dashboards"><img src="https://img.shields.io/badge/hard%20fork%20of-OpenSearch%20Dashboards-005EB8" alt="Hard fork of OpenSearch Dashboards"/></a>
+  <a href="https://github.com/sankettaware16/TLSOC-Dashboards/issues"><img src="https://img.shields.io/github/issues/sankettaware16/TLSOC-Dashboards" alt="Issues"/></a>
+</p>
+
 ---
 
 ## What is TLSOC?
@@ -149,6 +156,28 @@ largely applies to the build tooling.
   TLSOC adds the no-code layer, validation gates, and SOC workflow on top.
 - **Events are ECS-normalized** by the FOSS SOC Engine before indexing, so detections and
   dashboards work across heterogeneous log sources.
+
+## The TLSOC ecosystem
+
+This repository is the SOC console — one component of the TLSOC stack:
+
+| Repository | Role |
+|---|---|
+| **[TLSOC-Dashboards](https://github.com/sankettaware16/TLSOC-Dashboards)** (this repo) | The SOC UI + application server, incl. the one-click distribution in [`tlsocdistro/`](tlsocdistro/) |
+| [foss-soc-engine](https://github.com/sankettaware16/foss-soc-engine) | The parsing engine: consumes raw logs from Kafka, normalizes to ECS |
+| [tlsoc-machinelearning-framework](https://github.com/sankettaware16/tlsoc-machinelearning-framework) | ML-based detection component |
+| [TLSOCDockerDeploy](https://github.com/sankettaware16/TLSOCDockerDeploy) | The ELK-edition deployment (predecessor of `tlsocdistro/`) |
+| [tlsoc](https://github.com/sankettaware16/tlsoc) | Project landing page & docs |
+
+## Support, issues & security
+
+- **Bugs and feature requests** → [GitHub issues](https://github.com/sankettaware16/TLSOC-Dashboards/issues)
+  (see [CONTRIBUTING.md](CONTRIBUTING.md) for what to include).
+- **Security vulnerabilities** → report **privately** per [SECURITY.md](SECURITY.md) — never
+  in a public issue.
+- **Versioning**: TLSOC product releases are tagged `v1.x` (this is `v1.3.0`; the version is
+  shown in the UI's Help menu). The underlying platform code is based on the OpenSearch
+  Dashboards 3.x line, which is why `package.json` carries a `3.x` platform version.
 
 ## License & attribution
 
