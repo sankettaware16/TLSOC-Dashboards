@@ -118,7 +118,7 @@ Logstash**, plus the parsing engine and an endpoint onboarding script. The short
 
 ```bash
 # 1. Get the deployment files (the image itself is prebuilt — no compilation needed)
-git clone --depth 1 --branch v1.3.0 https://github.com/sankettaware16/TLSOC-Dashboards.git
+git clone --depth 1 --branch v1.3.1 https://github.com/sankettaware16/TLSOC-Dashboards.git
 cd TLSOC-Dashboards
 #    (the TLSOC Dashboards image ghcr.io/sankettaware16/tlsoc-dashboards:1.3.0 is pulled
 #     automatically; to build it yourself instead: bash tlsocdistro/dashboards/build-image.sh)
@@ -178,7 +178,7 @@ This repository is the SOC console — one component of the TLSOC stack:
   (see [CONTRIBUTING.md](CONTRIBUTING.md) for what to include).
 - **Security vulnerabilities** → report **privately** per [SECURITY.md](SECURITY.md) — never
   in a public issue.
-- **Versioning**: TLSOC product releases are tagged `v1.x` (this is `v1.3.0`; the version is
+- **Versioning**: TLSOC product releases are tagged `v1.x` (this is `v1.3.1`; the version is
   shown in the UI's Help menu). The underlying platform code is based on the OpenSearch
   Dashboards 3.x line, which is why `package.json` carries a `3.x` platform version.
 

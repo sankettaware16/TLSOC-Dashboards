@@ -28,12 +28,17 @@ set -a; source .env; set +a
 mkdir -p "$PARSER_OUTPUT_DIR" 2>/dev/null || sudo mkdir -p "$PARSER_OUTPUT_DIR"
 echo "[+] Parser output dir: $PARSER_OUTPUT_DIR (install the FOSS SOC Engine to write here — see README)"
 
-# ---- TLSOC Dashboards image present? ----
+# ---- TLSOC Dashboards image present? Pull it if not (the default is the public GHCR image) ----
 if ! docker image inspect "$TLSOC_DASHBOARDS_IMAGE" >/dev/null 2>&1; then
-  echo "[!] TLSOC Dashboards image '$TLSOC_DASHBOARDS_IMAGE' not found."
-  echo "    Build it first (one-time):   bash dashboards/build-image.sh"
-  echo "    then re-run ./install.sh"
-  exit 1
+  echo "[+] TLSOC Dashboards image '$TLSOC_DASHBOARDS_IMAGE' not found locally — pulling…"
+  if ! docker pull "$TLSOC_DASHBOARDS_IMAGE"; then
+    echo "[!] Could not pull '$TLSOC_DASHBOARDS_IMAGE'."
+    echo "    Either fix TLSOC_DASHBOARDS_IMAGE in .env (default: the public image"
+    echo "    ghcr.io/sankettaware16/tlsoc-dashboards:1.3.0), or build it from source (one-time):"
+    echo "        bash dashboards/build-image.sh"
+    echo "    then re-run ./install.sh"
+    exit 1
+  fi
 fi
 
 # ---- Start (everything EXCEPT Logstash) ----
