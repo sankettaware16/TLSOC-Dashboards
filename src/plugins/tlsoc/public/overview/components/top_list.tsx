@@ -54,7 +54,12 @@ export const TopList: React.FC<TopListProps> = ({ title, buckets, emptyText }) =
                 borderRadius: 2,
                 marginTop: 2,
                 width: `${Math.max(2, (b.count / max) * 100)}%`,
-                backgroundColor: euiThemeVars.euiColorPrimary,
+                // Inline styles are unreachable by stylesheets, so the accent must come through
+                // the CSS var published by accent/apply.ts. euiThemeVars.euiColorPrimary is the
+                // UNPATCHED upstream teal (the euiThemeVars JSON was never recolored) — never
+                // use it for accent surfaces. No hex fallback: the var is ALWAYS set by the
+                // always-on default patch, and a hardcoded fallback would be mode-wrong in dark.
+                backgroundColor: 'var(--tlsoc-accent)',
               }}
             />
           </div>

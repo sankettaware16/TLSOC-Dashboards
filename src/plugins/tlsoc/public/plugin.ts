@@ -13,8 +13,12 @@ import {
   DEFAULT_NAV_GROUPS,
 } from 'opensearch-dashboards/public';
 import { EuiIconType } from '@elastic/eui/src/components/icon/icon';
+import React from 'react';
+import { createRoot } from 'react-dom/client';
 import { DataPublicPluginStart } from '../../data/public';
 import { ComingSoonProps } from './components/coming_soon';
+import { applyAccent } from './accent/apply';
+import { AccentPickerNavControl } from './accent/accent_picker';
 
 /** A TLSOC-owned section of the Security Operations nav tree. */
 interface SocSection {
@@ -144,6 +148,11 @@ export class TlsocPlugin {
   private workspaceSeedSubscription?: Subscription;
 
   public setup(core: CoreSetup) {
+    // Universal accent palette: inject the override <style> NOW — uiSettings are synchronously
+    // available from injectedMetadata, and plugin setup runs before bootstrap.js attaches the
+    // theme CSS, so this is effectively pre-first-paint (no FOUC). Never throws (see apply.ts).
+    applyAccent(core);
+
     const sections = buildSections();
 
     sections.forEach((section) => {
@@ -281,6 +290,18 @@ export class TlsocPlugin {
    * guard + stored `Subscription`, unsubscribed in `stop()`.
    */
   public start(core: CoreStart) {
+    // The accent-palette header control (brush icon, right side — before the account button at
+    // order 2000). Header-control precedent: management/dev_tools register nav controls in
+    // start() with a mount that renders + returns an unmount.
+    core.chrome.navControls.registerRight({
+      order: 1500,
+      mount: (element: HTMLElement) => {
+        const root = createRoot(element);
+        root.render(React.createElement(AccentPickerNavControl, { core }));
+        return () => root.unmount();
+      },
+    });
+
     this.workspaceSeedSubscription = core.workspaces.currentWorkspaceId$.subscribe((id) => {
       if (id && !this.seededWorkspaceIds.has(id)) {
         this.seededWorkspaceIds.add(id);

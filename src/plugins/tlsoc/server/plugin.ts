@@ -15,6 +15,7 @@ import {
   alertOverrideSavedObjectType,
 } from './saved_objects';
 import { tlsocSecurityLogsSpecProvider } from './sample_data';
+import { getAccentSettings } from './ui_settings';
 import { TlsocConfigType } from './config';
 import { isOwnedTlsocDataViewTitle } from '../common/investigation/dv_match';
 
@@ -54,6 +55,9 @@ export class TlsocServerPlugin {
     core.savedObjects.registerType(userDirectorySavedObjectType);
     // PROB-29: the honest reopen display-override (see saved_objects/alert_override.ts).
     core.savedObjects.registerType(alertOverrideSavedObjectType);
+    // Universal accent palette: 'tlsoc:accentColor' ('' = the built-in purple). The client reads
+    // it synchronously at plugin setup and injects the override stylesheet (public/accent/).
+    core.uiSettings.register(getAccentSettings());
     const router = core.http.createRouter();
     // core.http.auth = the current-user seam (Task 5a.2): case routes resolve the acting
     // user from it via getCurrentActor (populated by the vendored security plugin's registerAuth).
