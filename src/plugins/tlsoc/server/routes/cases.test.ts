@@ -432,3 +432,222 @@ describe('registerCaseRoutes — PUT reopen (Closed → In Progress) creates dis
     expect(response.ok).toHaveBeenCalled();
   });
 });
+
+// PROB-30: the tester's exact repro at the reopen boundary — one alert (a1) linked to case A AND
+// case B. The ownership must be a SET: a second case reopening the same alert UNIONs its id rather
+// than overwriting (the old last-reopener-wins bug), and the display repoints to the latest reopener.
+describe('registerCaseRoutes — PROB-30 reopen UNIONs the override ownership set', () => {
+  let router: ReturnType<typeof httpServiceMock.createRouter>;
+  const logger = loggerMock.create();
+  const statusAuth = authWithRoles(['tlsoc_l1']);
+
+  const closedCase = (id: string, title: string, linkedAlertIds: string[]) => ({
+    id,
+    attributes: {
+      title,
+      description: 'd',
+      status: 'Closed',
+      severity: 'high',
+      assignee: null,
+      tags: [],
+      linkedAlertIds,
+      linkedFindingIds: [],
+      comments: [],
+      activity: [],
+      createdAt: '2026-07-18T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+      closedAt: '2026-07-19T00:00:00.000Z',
+    },
+  });
+
+  beforeEach(() => {
+    router = httpServiceMock.createRouter();
+    jest.clearAllMocks();
+  });
+
+  // reopeningCaseId reopens a case whose linked alert a1 is ACKNOWLEDGED; existingOverride (if any)
+  // is what soClient.get returns for the tlsoc-alert-override read in the union step.
+  const setup = (reopeningCaseId: string, title: string, existingOverride: any | 'none') => {
+    registerCaseRoutes(router, logger, statusAuth);
+    const handler = findHandler(router, 'put', '/api/tlsoc/cases/{id}');
+    const soGet = jest.fn().mockImplementation((type: string, gid: string) => {
+      if (type === 'tlsoc-alert-override') {
+        if (existingOverride === 'none') {
+          return Promise.reject({ output: { statusCode: 404 } }); // first reopen — no override yet
+        }
+        return Promise.resolve({ id: gid, type, attributes: existingOverride });
+      }
+      return Promise.resolve(closedCase(reopeningCaseId, title, ['a1']));
+    });
+    const soUpdate = jest.fn().mockResolvedValue({ id: reopeningCaseId });
+    const soCreate = jest.fn().mockResolvedValue({ id: 'ok' });
+    const transportRequest = jest.fn().mockImplementation(({ method, path }: any) => {
+      if (method === 'GET' && path === ALERTS_LIST_PATH) {
+        return Promise.resolve({ body: { alerts: [rawAlert('a1', 'm1', 'ACKNOWLEDGED')] } });
+      }
+      return Promise.resolve({ body: {} });
+    });
+    const context = makeContext({
+      soClient: { get: soGet, update: soUpdate, create: soCreate },
+      esClient: { transport: { request: transportRequest } },
+    });
+    const response = httpServerMock.createResponseFactory();
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: reopeningCaseId },
+      body: { status: 'In Progress' },
+    });
+    return { handler, soCreate, context, response, request };
+  };
+
+  it('FIRST reopen (case A) creates owners:[A] with A as the display owner', async () => {
+    const { handler, soCreate, context, response, request } = setup('A', 'Case A', 'none');
+    await handler(context, request, response);
+
+    expect(soCreate).toHaveBeenCalledTimes(1);
+    const [type, attrs, opts] = soCreate.mock.calls[0];
+    expect(type).toBe('tlsoc-alert-override');
+    expect(opts).toEqual({ id: 'a1', overwrite: true });
+    expect(attrs.owners).toEqual(['A']);
+    expect(attrs.caseId).toBe('A');
+    expect(attrs.caseName).toBe('Case A');
+    expect(response.ok).toHaveBeenCalled();
+  });
+
+  it('SECOND case (B) reopening the same alert UNIONs B in and repoints display to B', async () => {
+    // a1 already reopened by A → owners [A], display A. Now B reopens it.
+    const { handler, soCreate, context, response, request } = setup('B', 'Case B', {
+      alertId: 'a1',
+      owners: ['A'],
+      caseId: 'A',
+      caseName: 'Case A',
+    });
+    await handler(context, request, response);
+
+    const attrs = soCreate.mock.calls[0][1];
+    expect(attrs.owners).toEqual(['A', 'B']); // UNION, not overwrite
+    expect(attrs.caseId).toBe('B'); // display = latest reopener
+    expect(attrs.caseName).toBe('Case B');
+    expect(response.ok).toHaveBeenCalled();
+  });
+
+  it('re-reopening by the SAME case does not duplicate it in owners', async () => {
+    const { handler, soCreate, context, response, request } = setup('A', 'Case A', {
+      alertId: 'a1',
+      owners: ['A'],
+      caseId: 'A',
+      caseName: 'Case A',
+    });
+    await handler(context, request, response);
+
+    expect(soCreate.mock.calls[0][1].owners).toEqual(['A']); // still just [A]
+    expect(response.ok).toHaveBeenCalled();
+  });
+
+  it('BACK-COMPAT: a second reopen over a LEGACY (owners-less) override unions cleanly', async () => {
+    // Existing override is the pre-PROB-30 shape (only caseId). B reopens → owners [A,B].
+    const { handler, soCreate, context, response, request } = setup('B', 'Case B', {
+      alertId: 'a1',
+      caseId: 'A',
+      caseName: 'Case A',
+    });
+    await handler(context, request, response);
+
+    const attrs = soCreate.mock.calls[0][1];
+    expect(attrs.owners).toEqual(['A', 'B']);
+    expect(attrs.caseId).toBe('B');
+    expect(response.ok).toHaveBeenCalled();
+  });
+});
+
+// PROB-30: the re-close half of the tester repro, at the route level. a1 owned by [A,B], display B.
+// Re-closing B must TRIM to [A] and keep the SO (A still investigating); re-closing A empties it.
+describe('registerCaseRoutes — PROB-30 re-close REMOVES-from-set (shared-alert survives)', () => {
+  let router: ReturnType<typeof httpServiceMock.createRouter>;
+  const logger = loggerMock.create();
+  const statusAuth = authWithRoles(['tlsoc_l1']);
+
+  const reopenedCase = (id: string, linkedAlertIds: string[]) => ({
+    id,
+    attributes: {
+      title: `Case ${id}`,
+      description: 'd',
+      status: 'In Progress',
+      severity: 'high',
+      assignee: null,
+      tags: [],
+      linkedAlertIds,
+      linkedFindingIds: [],
+      comments: [],
+      activity: [],
+      createdAt: '2026-07-18T00:00:00.000Z',
+      updatedAt: '2026-07-18T00:00:00.000Z',
+    },
+  });
+
+  beforeEach(() => {
+    router = httpServiceMock.createRouter();
+    jest.clearAllMocks();
+  });
+
+  const setup = (closingCaseId: string, override: any) => {
+    registerCaseRoutes(router, logger, statusAuth);
+    const handler = findHandler(router, 'put', '/api/tlsoc/cases/{id}');
+    const soGet = jest.fn().mockImplementation((type: string, gid: string) => {
+      if (type === 'tlsoc-alert-override') {
+        return Promise.resolve({ id: gid, type, attributes: override });
+      }
+      if (type === 'tlsoc-case' && gid !== closingCaseId) {
+        // Surviving-owner lookup for the display repoint.
+        return Promise.resolve({ id: gid, attributes: { title: `Case ${gid}` } });
+      }
+      return Promise.resolve(reopenedCase(closingCaseId, ['a1']));
+    });
+    const soUpdate = jest.fn().mockResolvedValue({ id: closingCaseId });
+    const soDelete = jest.fn().mockResolvedValue({});
+    const transportRequest = jest.fn().mockResolvedValue({ body: { alerts: [] } });
+    const context = makeContext({
+      soClient: { get: soGet, update: soUpdate, delete: soDelete },
+      esClient: { transport: { request: transportRequest } },
+    });
+    const response = httpServerMock.createResponseFactory();
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: closingCaseId },
+      body: { status: 'Closed', acknowledgeAlerts: false },
+    });
+    return { handler, soUpdate, soDelete, context, response, request };
+  };
+
+  it('re-closing B (the display owner) TRIMS owners to [A], repoints display to A, KEEPS the SO', async () => {
+    const { handler, soUpdate, soDelete, context, response, request } = setup('B', {
+      alertId: 'a1',
+      owners: ['A', 'B'],
+      caseId: 'B',
+      caseName: 'Case B',
+    });
+    await handler(context, request, response);
+
+    const ovUpdate = soUpdate.mock.calls.find((c: any[]) => c[0] === 'tlsoc-alert-override');
+    expect(ovUpdate).toBeDefined();
+    expect(ovUpdate![2].owners).toEqual(['A']); // A survives
+    expect(ovUpdate![2].caseId).toBe('A'); // display repointed to the survivor
+    expect(ovUpdate![2].caseName).toBe('Case A');
+    const ovDelete = soDelete.mock.calls.find((c: any[]) => c[0] === 'tlsoc-alert-override');
+    expect(ovDelete).toBeUndefined(); // NOT deleted — this is the fix
+    expect(response.ok).toHaveBeenCalled();
+  });
+
+  it('then re-closing A (the last owner) empties the set → override SO DELETED', async () => {
+    const { handler, soUpdate, soDelete, context, response, request } = setup('A', {
+      alertId: 'a1',
+      owners: ['A'],
+      caseId: 'A',
+      caseName: 'Case A',
+    });
+    await handler(context, request, response);
+
+    const ovUpdate = soUpdate.mock.calls.find((c: any[]) => c[0] === 'tlsoc-alert-override');
+    expect(ovUpdate).toBeUndefined();
+    expect(soDelete).toHaveBeenCalledWith('tlsoc-alert-override', 'a1');
+    expect(response.ok).toHaveBeenCalled();
+  });
+});

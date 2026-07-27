@@ -100,13 +100,32 @@ export interface ReopenedFromCase {
 }
 
 /**
- * PROB-29: the attributes of a `tlsoc-alert-override` saved object (id = the alert id). Recorded on
- * case reopen for each linked alert the engine still reports ACKNOWLEDGED; deleted on re-close,
- * manual acknowledge, or lazily when the engine finally COMPLETES the alert.
+ * PROB-29 / PROB-30: the attributes of a `tlsoc-alert-override` saved object (id = the alert id).
+ * Recorded on case reopen for each linked alert the engine still reports ACKNOWLEDGED; deleted on
+ * re-close, manual acknowledge, or lazily when the engine finally COMPLETES the alert.
+ *
+ * PROB-30 — OWNERSHIP IS A SET. A single alert can be linked to several cases; if two of them are
+ * reopened, BOTH own the override and re-closing one must NOT wipe it while the other is still open.
+ * `owners` is that ownership set (the case ids that reopened this alert). A case reopen UNIONs its id
+ * into `owners`; a re-close / case-delete REMOVES its id, and the SO is deleted only when `owners`
+ * empties. `caseId` + `caseName` remain the DISPLAY fields — the MOST-RECENT reopener — so the badge
+ * still reads "Reopened · <case>"; `reopenedAt`/`reopenedBy` are likewise latest-writer.
+ *
+ * BACK-COMPAT (zero migration): `owners` is OPTIONAL — a legacy single-owner doc written before
+ * PROB-30 has no `owners[]`. Every reader MUST resolve ownership through {@link overrideOwners},
+ * which treats a missing/empty `owners[]` as `[caseId]`. The `owners` mapping (keyword) is additive.
  */
 export interface AlertOverrideAttributes {
   alertId: string;
+  /**
+   * PROB-30: the set of case ids that currently reopen this alert. Optional for back-compat —
+   * absent on legacy (pre-PROB-30) docs; resolve via {@link overrideOwners} which falls back to
+   * `[caseId]`. New writes always set it.
+   */
+  owners?: string[];
+  /** DISPLAY only — the most-recent reopener's case id (drives the "Reopened · <case>" badge). */
   caseId: string;
+  /** DISPLAY only — the most-recent reopener's case title. */
   caseName: string;
   monitorId: string;
   reopenedAt: string;

@@ -9,8 +9,14 @@ import { coreMock, httpServerMock, httpServiceMock } from '../../../../core/serv
 import { loggerMock } from '@osd/logging/target/mocks';
 import { HttpAuth, RequestHandler } from '../../../../core/server';
 import { ALERT_OVERRIDE_SO_TYPE } from '../saved_objects';
-import { deleteAlertOverrides, mergeAlertOverrides, registerAlertRoutes } from './alerts';
+import {
+  deleteAlertOverrides,
+  mergeAlertOverrides,
+  registerAlertRoutes,
+  removeOverrideOwner,
+} from './alerts';
 import { TlsocAlert, AlertState } from '../../common/alerts';
+import { CASE_SO_TYPE } from '../saved_objects';
 
 const flush = () => new Promise((r) => setImmediate(r));
 
@@ -143,6 +149,50 @@ describe('mergeAlertOverrides (PROB-29 LIST hydration)', () => {
     const input = [alert('a1', 'ACKNOWLEDGED')];
     await expect(mergeAlertOverrides(soClient, input, logger)).resolves.toBe(input);
   });
+
+  it('PROB-30 BACK-COMPAT: a legacy override (no owners[]) still merges the badge', async () => {
+    // overrideSo() carries only caseId/caseName (the pre-PROB-30 shape). Display keys off those, so
+    // the badge renders unchanged — the owners[] model is invisible to the merge/display path.
+    const del = jest.fn();
+    const find = jest.fn().mockResolvedValue({ saved_objects: [overrideSo('a1')] });
+    const soClient = { find, delete: del } as any;
+
+    const out = await mergeAlertOverrides(soClient, [alert('a1', 'ACKNOWLEDGED')], logger);
+
+    expect(out[0].reopenedFromCase).toEqual({
+      caseId: 'c-1',
+      caseName: 'Case One',
+      reopenedAt: '2026-07-21T00:00:00.000Z',
+    });
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('PROB-30: a multi-owner override shows the most-recent reopener (display caseId/caseName)', async () => {
+    const del = jest.fn();
+    const multi = {
+      id: 'a1',
+      attributes: {
+        alertId: 'a1',
+        owners: ['A', 'B'],
+        caseId: 'B',
+        caseName: 'Case B',
+        monitorId: 'm1',
+        reopenedAt: '2026-07-27T00:00:00.000Z',
+        reopenedBy: 'analyst',
+      },
+    };
+    const find = jest.fn().mockResolvedValue({ saved_objects: [multi] });
+    const soClient = { find, delete: del } as any;
+
+    const out = await mergeAlertOverrides(soClient, [alert('a1', 'ACKNOWLEDGED')], logger);
+
+    expect(out[0].reopenedFromCase).toEqual({
+      caseId: 'B',
+      caseName: 'Case B',
+      reopenedAt: '2026-07-27T00:00:00.000Z',
+    });
+    expect(del).not.toHaveBeenCalled();
+  });
 });
 
 describe('deleteAlertOverrides (PROB-29)', () => {
@@ -169,6 +219,146 @@ describe('deleteAlertOverrides (PROB-29)', () => {
     await deleteAlertOverrides(soClient, ['a1', 'a2'], logger, 'test');
     expect(del).toHaveBeenCalledWith(ALERT_OVERRIDE_SO_TYPE, 'a1');
     expect(del).toHaveBeenCalledWith(ALERT_OVERRIDE_SO_TYPE, 'a2');
+  });
+
+  it('PROB-30: deletes OUTRIGHT even for a multi-owner override (ack/stale clear the whole set)', async () => {
+    // deleteAlertOverrides never reads owners — it is the unconditional clear used by manual
+    // acknowledge and stale-engine cleanup. An override owned by [A,B] is removed with no get/update.
+    const del = jest.fn().mockResolvedValue({});
+    const get = jest.fn();
+    const update = jest.fn();
+    const soClient = { delete: del, get, update } as any;
+    await deleteAlertOverrides(soClient, ['a1'], logger, 'test');
+    expect(del).toHaveBeenCalledWith(ALERT_OVERRIDE_SO_TYPE, 'a1');
+    expect(get).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeOverrideOwner (PROB-30 remove-from-set)', () => {
+  const logger = loggerMock.create();
+  beforeEach(() => jest.clearAllMocks());
+
+  const soWith = (attrs: any) => {
+    const get = jest.fn().mockImplementation((type: string, id: string) => {
+      if (type === CASE_SO_TYPE) {
+        // Surviving case lookup for the display repoint — title = "Case <id>".
+        return Promise.resolve({ id, attributes: { title: `Case ${id}` } });
+      }
+      return Promise.resolve({ id, attributes: attrs });
+    });
+    const del = jest.fn().mockResolvedValue({});
+    const update = jest.fn().mockResolvedValue({});
+    return { soClient: { get, delete: del, update } as any, get, del, update };
+  };
+
+  it('THE REPRO: one of two owners re-closes → set trimmed to the survivor, SO SURVIVES', async () => {
+    // Alert a1 reopened by A then B → owners [A,B], display = B (latest). Re-close B.
+    const { soClient, del, update } = soWith({
+      alertId: 'a1',
+      owners: ['A', 'B'],
+      caseId: 'B',
+      caseName: 'Case B',
+    });
+    await removeOverrideOwner(soClient, ['a1'], 'B', logger, 'case re-closed');
+
+    expect(del).not.toHaveBeenCalled(); // A still owns it — must not be deleted
+    expect(update).toHaveBeenCalledTimes(1);
+    const [type, id, patch] = update.mock.calls[0];
+    expect(type).toBe(ALERT_OVERRIDE_SO_TYPE);
+    expect(id).toBe('a1');
+    expect(patch.owners).toEqual(['A']); // trimmed to the survivor
+    // Display owner (B) left → repoint to the deterministic survivor owners[0] = A, name re-fetched.
+    expect(patch.caseId).toBe('A');
+    expect(patch.caseName).toBe('Case A');
+  });
+
+  it('THE REPRO cont.: re-closing the LAST owner empties the set → SO DELETED', async () => {
+    const { soClient, del, update } = soWith({
+      alertId: 'a1',
+      owners: ['A'],
+      caseId: 'A',
+      caseName: 'Case A',
+    });
+    await removeOverrideOwner(soClient, ['a1'], 'A', logger, 'case re-closed');
+
+    expect(update).not.toHaveBeenCalled();
+    expect(del).toHaveBeenCalledWith(ALERT_OVERRIDE_SO_TYPE, 'a1');
+  });
+
+  it('a non-display owner leaving is trimmed WITHOUT repointing the display fields', async () => {
+    // owners [A,B], display = B (latest). A re-closes → trim to [B], display stays B.
+    const { soClient, del, update } = soWith({
+      alertId: 'a1',
+      owners: ['A', 'B'],
+      caseId: 'B',
+      caseName: 'Case B',
+    });
+    await removeOverrideOwner(soClient, ['a1'], 'A', logger, 'case re-closed');
+
+    expect(del).not.toHaveBeenCalled();
+    const patch = update.mock.calls[0][2];
+    expect(patch.owners).toEqual(['B']);
+    expect(patch.caseId).toBeUndefined(); // display untouched — B is still displayed
+    expect(patch.caseName).toBeUndefined();
+  });
+
+  it('a case that never owned the override is a no-op (no delete, no update)', async () => {
+    const { soClient, del, update } = soWith({
+      alertId: 'a1',
+      owners: ['A', 'B'],
+      caseId: 'B',
+      caseName: 'Case B',
+    });
+    await removeOverrideOwner(soClient, ['a1'], 'Z', logger, 'case re-closed');
+
+    expect(del).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('BACK-COMPAT: a legacy single-owner doc (no owners[]) is removed by its caseId → deleted', async () => {
+    // Pre-PROB-30 shape: no owners[], only caseId. Re-closing that case must delete the SO.
+    const { soClient, del, update } = soWith({ alertId: 'a1', caseId: 'A', caseName: 'Case A' });
+    await removeOverrideOwner(soClient, ['a1'], 'A', logger, 'case re-closed');
+
+    expect(update).not.toHaveBeenCalled();
+    expect(del).toHaveBeenCalledWith(ALERT_OVERRIDE_SO_TYPE, 'a1');
+  });
+
+  it('tolerates a 404 (override already gone) without throwing or logging', async () => {
+    const get = jest.fn().mockRejectedValue({ output: { statusCode: 404 } });
+    const soClient = { get, delete: jest.fn(), update: jest.fn() } as any;
+    await expect(
+      removeOverrideOwner(soClient, ['a1'], 'A', logger, 'case re-closed')
+    ).resolves.toBeUndefined();
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('logs (never throws) on a non-404 read failure', async () => {
+    const get = jest.fn().mockRejectedValue(new Error('so down'));
+    const soClient = { get, delete: jest.fn(), update: jest.fn() } as any;
+    await expect(
+      removeOverrideOwner(soClient, ['a1'], 'A', logger, 'case re-closed')
+    ).resolves.toBeUndefined();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('display repoint survives an unreadable surviving case (caseName falls back to "")', async () => {
+    const get = jest.fn().mockImplementation((type: string) => {
+      if (type === CASE_SO_TYPE) return Promise.reject(new Error('case gone'));
+      return Promise.resolve({
+        id: 'a1',
+        attributes: { alertId: 'a1', owners: ['A', 'B'], caseId: 'B', caseName: 'Case B' },
+      });
+    });
+    const update = jest.fn().mockResolvedValue({});
+    const soClient = { get, delete: jest.fn(), update } as any;
+    await removeOverrideOwner(soClient, ['a1'], 'B', logger, 'case re-closed');
+
+    const patch = update.mock.calls[0][2];
+    expect(patch.owners).toEqual(['A']);
+    expect(patch.caseId).toBe('A');
+    expect(patch.caseName).toBe(''); // honest fallback; LIST merge shows the id
   });
 });
 

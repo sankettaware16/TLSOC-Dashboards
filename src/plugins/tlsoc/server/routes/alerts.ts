@@ -20,8 +20,10 @@ import {
   filterAlertsByRange,
   normalizeAlert,
   normalizeFinding,
+  overrideOwners,
 } from '../../common/alerts';
-import { ALERT_OVERRIDE_SO_TYPE, DETECTION_RULE_SO_TYPE } from '../saved_objects';
+import { CaseAttributes } from '../../common/cases';
+import { ALERT_OVERRIDE_SO_TYPE, CASE_SO_TYPE, DETECTION_RULE_SO_TYPE } from '../saved_objects';
 
 /**
  * Build a map from OpenSearch Alerting monitor id → TLSOC rule reference by scanning all
@@ -150,32 +152,25 @@ export async function mergeAlertOverrides(
 }
 
 /**
- * PROB-29: best-effort delete of reopen-override SOs (id = alert id). 404s are tolerated (the
- * override may already be gone). Never throws — the caller's real work (ack, re-close) must not fail
+ * PROB-29: best-effort UNCONDITIONAL delete of reopen-override SOs (id = alert id). 404s are
+ * tolerated (the override may already be gone). Never throws — the caller's real work must not fail
  * because a display-override could not be cleaned up.
  *
- * `ownerCaseId` scopes the delete to overrides written BY that case: when one alert is linked to two
- * cases and both were reopened, the override id (= alert id) is shared and its `caseId` records the
- * last reopener. Re-closing / deleting one case must NOT wipe an override another still-reopened case
- * owns — so the case-lifecycle callers pass their own id and an override owned by a different case is
- * left in place. The unconditional callers (manual acknowledge, stale-engine cleanup) omit it: those
- * clears are correct regardless of which case reopened the alert.
+ * This clears the WHOLE override regardless of how many cases own it, so it is used only by the two
+ * callers for which that is correct: MANUAL ACKNOWLEDGE (the analyst finished the alert, period —
+ * every reopening case's claim is void) and STALE-ENGINE cleanup (the engine moved the alert off
+ * ACKNOWLEDGED, so `owners` is irrelevant). Case-lifecycle removal (re-close / case-delete) must NOT
+ * use this — it only drops the CALLING case from the ownership set; see {@link removeOverrideOwner}.
  */
 export async function deleteAlertOverrides(
   soClient: SavedObjectsClientContract,
   alertIds: string[],
   logger: Logger,
-  reason: string,
-  ownerCaseId?: string
+  reason: string
 ): Promise<void> {
   await Promise.all(
     alertIds.map(async (id) => {
       try {
-        if (ownerCaseId !== undefined) {
-          // Only delete if this override belongs to the calling case.
-          const so = await soClient.get<AlertOverrideAttributes>(ALERT_OVERRIDE_SO_TYPE, id);
-          if (so.attributes.caseId !== ownerCaseId) return; // owned by another reopened case — keep it
-        }
         await soClient.delete(ALERT_OVERRIDE_SO_TYPE, id);
       } catch (err: any) {
         const status = err?.output?.statusCode ?? err?.statusCode;
@@ -184,6 +179,74 @@ export async function deleteAlertOverrides(
       }
     })
   );
+}
+
+/**
+ * PROB-30: REMOVE one case from a reopen-override's ownership set (the core fix). Used by the
+ * case-lifecycle callers — re-close and case-delete — instead of an unconditional delete.
+ *
+ * For each alert id: read the override, resolve its ownership set through the {@link overrideOwners}
+ * back-compat shim (a legacy single-owner doc reads as `[caseId]`), and drop `caseId`.
+ *   - If this case was never an owner → nothing to do (another case's override, left untouched).
+ *   - If the set EMPTIES → delete the SO (this was the last reopener).
+ *   - Otherwise → PUT the trimmed `owners[]` back so the STILL-reopened cases keep their override.
+ *
+ * DISPLAY repoint: `caseId`/`caseName` show the most-recent reopener. If the LEAVING case was that
+ * displayed owner, we repoint to a deterministic survivor — `owners[0]`, the earliest remaining
+ * reopener (the reopen path appends, so index 0 is the oldest) — and best-effort re-fetch that
+ * case's title so the badge keeps reading "Reopened · <case>" with a real name (falling back to ''
+ * if the case can't be read; the LIST merge then shows the id, still honest). Never throws — a flaky
+ * SO op must not block the case status change or the delete.
+ */
+export async function removeOverrideOwner(
+  soClient: SavedObjectsClientContract,
+  alertIds: string[],
+  caseId: string,
+  logger: Logger,
+  reason: string
+): Promise<void> {
+  await Promise.all(
+    alertIds.map(async (id) => {
+      try {
+        const so = await soClient.get<AlertOverrideAttributes>(ALERT_OVERRIDE_SO_TYPE, id);
+        const before = overrideOwners(so.attributes);
+        const owners = before.filter((c) => c !== caseId);
+        if (owners.length === before.length) return; // this case never owned it — leave it alone
+        if (owners.length === 0) {
+          await soClient.delete(ALERT_OVERRIDE_SO_TYPE, id); // last reopener left — drop the SO
+          return;
+        }
+        // A still-reopened case remains — trim the set. Repoint display only if the leaver was it.
+        const patch: Partial<AlertOverrideAttributes> = { owners };
+        if (so.attributes.caseId === caseId) {
+          patch.caseId = owners[0];
+          patch.caseName = await fetchCaseTitle(soClient, owners[0], logger);
+        }
+        await soClient.update<AlertOverrideAttributes>(ALERT_OVERRIDE_SO_TYPE, id, patch);
+      } catch (err: any) {
+        const status = err?.output?.statusCode ?? err?.statusCode;
+        if (status === 404) return; // already gone — the desired end state
+        logger.warn(
+          `tlsoc alerts: could not remove override owner for ${id} (${reason}): ${err.message}`
+        );
+      }
+    })
+  );
+}
+
+/** Best-effort case title for the display repoint above; '' when the case can't be read. */
+async function fetchCaseTitle(
+  soClient: SavedObjectsClientContract,
+  caseId: string,
+  logger: Logger
+): Promise<string> {
+  try {
+    const c = await soClient.get<CaseAttributes>(CASE_SO_TYPE, caseId);
+    return c.attributes.title ?? '';
+  } catch (err: any) {
+    logger.warn(`tlsoc alerts: could not read case ${caseId} for override display repoint: ${err.message}`);
+    return '';
+  }
 }
 
 /**

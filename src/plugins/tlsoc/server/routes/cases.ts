@@ -27,9 +27,10 @@ import {
   AlertOverrideAttributes,
   groupAckTargets,
   normalizeAlert,
+  overrideOwners,
   partitionByIds,
 } from '../../common/alerts';
-import { buildRuleRefMap, deleteAlertOverrides, fetchAlertsByIds } from './alerts';
+import { buildRuleRefMap, fetchAlertsByIds, removeOverrideOwner } from './alerts';
 import { getCurrentActor } from '../lib/current_actor';
 import {
   callerHasAnyRole,
@@ -421,14 +422,16 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
         }
       }
 
-      // PROB-29 RE-CLOSE: the alerts are acknowledged-done again — drop any reopen display-override
-      // so they stop reading as reactivated. Best-effort and non-blocking (deleteAlertOverrides
-      // never throws), and independent of the acknowledgeAlerts opt-out: a re-closed case's alerts
-      // must not linger as "Reopened" regardless of whether the analyst re-acknowledged them.
+      // PROB-29/30 RE-CLOSE: the alerts are acknowledged-done again FOR THIS CASE — drop THIS case
+      // from each override's ownership set. Best-effort and non-blocking (removeOverrideOwner never
+      // throws), and independent of the acknowledgeAlerts opt-out: a re-closed case's alerts must not
+      // linger as "Reopened" for it regardless of whether the analyst re-acknowledged them. PROB-30:
+      // if another still-reopened case also owns the override, it SURVIVES (owners trimmed, not
+      // deleted); only when this was the last owner is the SO removed.
       if (isClosing) {
         const linkedIds: string[] = existing.attributes.linkedAlertIds ?? [];
         if (linkedIds.length > 0) {
-          await deleteAlertOverrides(soClient, linkedIds, logger, 'case re-closed', id);
+          await removeOverrideOwner(soClient, linkedIds, id, logger, 'case re-closed');
         }
       }
 
@@ -447,9 +450,22 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
             let reopened = 0;
             let failed = 0;
             for (const a of acknowledged) {
+              // PROB-30: UNION this case into the override's ownership set. Read any existing override
+              // (a prior reopen by this or another case), resolve its owners through the back-compat
+              // shim (legacy doc → [caseId]), and add this id. A 404/other read failure is treated as
+              // "no existing override" → owners starts as [thisCase] (first reopen). Non-blocking.
+              let existingOwners: string[] = [];
+              try {
+                const prev = await soClient.get<AlertOverrideAttributes>(ALERT_OVERRIDE_SO_TYPE, a.id);
+                existingOwners = overrideOwners(prev.attributes);
+              } catch (getErr) {
+                existingOwners = [];
+              }
+              const owners = existingOwners.includes(id) ? existingOwners : [...existingOwners, id];
               const attrs: AlertOverrideAttributes = {
                 alertId: a.id,
-                caseId: id,
+                owners,
+                caseId: id, // DISPLAY: this (latest) reopener
                 caseName: existing.attributes.title,
                 monitorId: a?.monitor_id ?? '',
                 reopenedAt: now,
@@ -583,12 +599,13 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
         });
       }
       try {
-        // PROB-29: best-effort clean this case's reopen display-overrides before deleting it, so a
-        // deleted case leaves none of its alerts falsely reading "Reopened". Non-blocking — the
-        // overrides also self-clean via the LIST merge once the engine completes the alert.
+        // PROB-29/30: best-effort remove THIS case from its alerts' reopen-override ownership sets
+        // before deleting it, so a deleted case leaves none of its alerts falsely reading "Reopened"
+        // for it — while any still-reopened case that shares the alert keeps its override (PROB-30).
+        // Non-blocking — overrides also self-clean via the LIST merge once the engine completes.
         const linkedIds: string[] = existing?.attributes?.linkedAlertIds ?? [];
         if (linkedIds.length > 0) {
-          await deleteAlertOverrides(soClient, linkedIds, logger, 'case deleted', id);
+          await removeOverrideOwner(soClient, linkedIds, id, logger, 'case deleted');
         }
         await soClient.delete(TYPE, id);
         return response.ok({ body: { deleted: true } });

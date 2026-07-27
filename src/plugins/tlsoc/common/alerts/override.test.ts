@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { applyAlertOverride, effectiveAlertState } from './override';
+import { applyAlertOverride, effectiveAlertState, overrideOwners } from './override';
 import { AlertOverrideAttributes, AlertState, TlsocAlert } from './types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -103,5 +103,24 @@ describe('effectiveAlertState (PROB-29)', () => {
   it('never promotes a non-ACKNOWLEDGED alert even if a reopenedFromCase somehow rode along', () => {
     const weird = { ...baseAlert('COMPLETED'), reopenedFromCase: override } as any;
     expect(effectiveAlertState(weird)).toBe('COMPLETED');
+  });
+});
+
+describe('overrideOwners — PROB-30 ownership-set shim', () => {
+  it('returns owners[] verbatim when present', () => {
+    expect(overrideOwners({ owners: ['A', 'B'], caseId: 'B' })).toEqual(['A', 'B']);
+  });
+
+  it('BACK-COMPAT: a legacy doc with no owners[] reads as [caseId]', () => {
+    // Exactly the pre-PROB-30 single-owner doc shape (owners field absent).
+    expect(overrideOwners({ caseId: 'c-1' } as any)).toEqual(['c-1']);
+  });
+
+  it('BACK-COMPAT: an empty owners[] also falls back to [caseId]', () => {
+    expect(overrideOwners({ owners: [], caseId: 'c-1' })).toEqual(['c-1']);
+  });
+
+  it('returns [] only when there is neither an owners[] nor a caseId', () => {
+    expect(overrideOwners({} as any)).toEqual([]);
   });
 });

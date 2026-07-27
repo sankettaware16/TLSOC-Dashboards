@@ -55,3 +55,20 @@ export function effectiveAlertState(alert: TlsocAlert): AlertState {
   if (alert.reopenedFromCase && alert.state === 'ACKNOWLEDGED') return 'ACTIVE';
   return alert.state;
 }
+
+/**
+ * PROB-30 BACK-COMPAT SHIM — resolve an override's ownership SET, tolerating legacy docs.
+ *
+ * Ownership moved from a single `caseId` (last-reopener-wins) to an `owners[]` set of case ids so a
+ * shared alert reopened by two cases survives one of them re-closing. This is zero-migration: an OLD
+ * override doc written before PROB-30 has no `owners[]`. EVERY reader of ownership (the reopen union
+ * and the remove-from-set delete path) MUST go through this helper so a legacy doc reads as
+ * `[caseId]` — its lone owner. A doc with a non-empty `owners[]` returns it verbatim; a doc missing
+ * both (should never happen) returns `[]`.
+ */
+export function overrideOwners(
+  override: Pick<AlertOverrideAttributes, 'owners' | 'caseId'>
+): string[] {
+  if (override.owners && override.owners.length > 0) return override.owners;
+  return override.caseId ? [override.caseId] : [];
+}

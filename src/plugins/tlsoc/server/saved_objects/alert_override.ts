@@ -18,6 +18,12 @@ export const ALERT_OVERRIDE_SO_TYPE = 'tlsoc-alert-override';
  * engine state stays visible and untouched. The override is deleted when the analyst acknowledges the
  * alert again, when the case is re-closed, or lazily when the engine finally COMPLETES the alert.
  *
+ * PROB-30: ownership is a SET (`owners`, a keyword array of case ids), because one alert can be
+ * reopened by several linked cases at once. A reopen UNIONs the case id in; a re-close / case-delete
+ * REMOVES it and deletes the SO only when the set empties (so another still-reopened case's override
+ * survives). Manual acknowledge and engine-completion still clear the SO outright. `caseId`/`caseName`
+ * stay the DISPLAY fields (most-recent reopener). Legacy docs with no `owners[]` are read as `[caseId]`.
+ *
  * All fields are simple keyword/date; `dynamic:false` (zero-migration idiom, same as case/detection-rule).
  * `namespaceType:'single'` keeps overrides in the same workspace scope as the `tlsoc-case` they mirror.
  */
@@ -29,6 +35,10 @@ export const alertOverrideSavedObjectType: SavedObjectsType = {
     dynamic: false,
     properties: {
       alertId: { type: 'keyword' },
+      // PROB-30: the ownership SET — every case id currently reopening this alert. Keyword mappings
+      // are inherently multi-value, so a string[] stores here with no mapping change beyond this
+      // one additive field (zero migration). Legacy docs lack it; readers fall back to [caseId].
+      owners: { type: 'keyword' },
       caseId: { type: 'keyword' },
       caseName: { type: 'keyword' },
       monitorId: { type: 'keyword' },
