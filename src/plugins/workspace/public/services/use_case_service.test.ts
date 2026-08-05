@@ -123,6 +123,13 @@ describe('UseCaseService', () => {
             euiIconType: 'indexMapping',
           },
           {
+            id: 'opensearch_index_management_dashboards_%2Findices',
+            category: DEFAULT_APP_CATEGORIES.manageWorkspace,
+            order: 450,
+            title: 'Index management',
+            euiIconType: 'indexSettings',
+          },
+          {
             id: 'objects',
             category: DEFAULT_APP_CATEGORIES.manageWorkspace,
             order: 500,

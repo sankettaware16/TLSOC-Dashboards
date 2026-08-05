@@ -37,7 +37,7 @@ Agentless: endpoints only run the standard rsyslog Kafka forwarder — nothing e
 the public image, so Docker pulls it automatically on `install.sh`:
 
 ```bash
-docker pull ghcr.io/sankettaware16/tlsoc-dashboards:1.3.0    # optional pre-pull
+docker pull ghcr.io/sankettaware16/tlsoc-dashboards:1.3.1    # optional pre-pull
 ```
 
 **Option B — build it from source (one-time, ~20–40 min).** For air-gapped hosts or custom
@@ -45,10 +45,10 @@ builds:
 
 ```bash
 # from the TLSOC-Dashboards repo root (Node 22, ~8 GB RAM):
-bash tlsocdistro/dashboards/build-image.sh      # → tlsoc-dashboards:1.3.0
+bash tlsocdistro/dashboards/build-image.sh      # → tlsoc-dashboards:1.3.1
 ```
 
-Then set `TLSOC_DASHBOARDS_IMAGE=tlsoc-dashboards:1.3.0` in `.env` (and copy the image to your
+Then set `TLSOC_DASHBOARDS_IMAGE=tlsoc-dashboards:1.3.1` in `.env` (and copy the image to your
 deployment host or your own registry if you build elsewhere).
 
 ### 2. Install the FOSS SOC Engine on this host

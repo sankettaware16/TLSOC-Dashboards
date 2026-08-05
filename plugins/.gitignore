@@ -8,3 +8,8 @@
 security-dashboards-plugin/node_modules/
 security-dashboards-plugin/build/
 security-dashboards-plugin/target/
+# TLSOC: index-management-dashboards-plugin is likewise a FROZEN VENDORED SNAPSHOT — track it.
+!index-management-dashboards-plugin/
+index-management-dashboards-plugin/node_modules/
+index-management-dashboards-plugin/build/
+index-management-dashboards-plugin/target/

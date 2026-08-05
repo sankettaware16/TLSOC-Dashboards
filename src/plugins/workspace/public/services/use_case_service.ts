@@ -115,6 +115,21 @@ export class UseCaseService {
               order: 400,
               euiIconType: 'indexMapping',
             },
+            // TLSOC: the index-management-dashboards-plugin's Indexes page, surfaced right below
+            // Data views. The app id is that plugin's per-page id for ROUTES.INDICES ("/indices",
+            // URI-encoded); TLSOC's copy of the plugin registers that one app as
+            // insideWorkspace|outsideWorkspace so this link survives the in-workspace availability
+            // filter (if the plugin is absent, chrome drops the unmatched link — harmless). NOTE:
+            // the page lists CLUSTER-WIDE indices; destructive actions are gated by backend security.
+            {
+              id: 'opensearch_index_management_dashboards_%2Findices',
+              category: DEFAULT_APP_CATEGORIES.manageWorkspace,
+              order: 450,
+              title: i18n.translate('workspace.left.indexManagement.label', {
+                defaultMessage: 'Index management',
+              }),
+              euiIconType: 'indexSettings',
+            },
             {
               id: 'objects',
               category: DEFAULT_APP_CATEGORIES.manageWorkspace,

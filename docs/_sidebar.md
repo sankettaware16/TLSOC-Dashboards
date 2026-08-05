@@ -222,7 +222,6 @@
     - [README](../scripts/README.md)
   - [DOCS_README](DOCS_README.md)
   - [Theme](theme.md)
-  - [CLAUDE](../CLAUDE.md)
   - [CODE_OF_CONDUCT](../CODE_OF_CONDUCT.md)
   - [COMMUNICATIONS](../COMMUNICATIONS.md)
   - [CONTRIBUTING](../CONTRIBUTING.md)
