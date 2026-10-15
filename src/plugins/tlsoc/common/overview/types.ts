@@ -92,6 +92,10 @@ export interface RecentEvent {
   user: string | null;
   ruleName: string | null;
   country: string | null;
+  // Internal-deployment origin from the rsyslog envelope (all IPs are internal → country is empty).
+  dept: string | null;
+  org: string | null;
+  env: string | null;
 }
 
 export type OverviewState = 'pristine' | 'live';

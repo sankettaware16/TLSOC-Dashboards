@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { EuiPanel, EuiTitle, EuiSpacer, EuiBasicTable, EuiBasicTableColumn, EuiBadge, EuiText, EuiHealth } from '@elastic/eui';
 import { RecentEvent } from '../../../common/overview/types';
 import { classifySource, SOURCE_TYPE_LABELS, SourceType } from '../../../common/overview/source_types';
@@ -14,13 +14,24 @@ interface RecentEventsTableProps {
 }
 
 function outcomeColor(outcome: string | null): string {
-  if (outcome === 'failure') return 'danger';
-  if (outcome === 'success') return 'success';
+  const values = (outcome ?? '').split(', ');
+  if (values.includes('failure')) return 'danger';
+  if (values.includes('success')) return 'success';
   return 'hollow';
 }
 
+const PAGE_SIZE = 25;
+
 /** The freshest events across all source types — the "what just happened" table. */
 export const RecentEventsTable: React.FC<RecentEventsTableProps> = ({ events }) => {
+  const [pageIndex, setPageIndex] = useState(0);
+  // A refresh may shrink the list — keep the page in range.
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(events.length / PAGE_SIZE) - 1);
+    if (pageIndex > maxPage) setPageIndex(maxPage);
+  }, [events.length, pageIndex]);
+  const pageEvents = events.slice(pageIndex * PAGE_SIZE, pageIndex * PAGE_SIZE + PAGE_SIZE);
+
   const columns: Array<EuiBasicTableColumn<RecentEvent>> = [
     {
       field: 'timestamp',
@@ -58,7 +69,22 @@ export const RecentEventsTable: React.FC<RecentEventsTableProps> = ({ events }) 
       render: (v: string | null) => (v ? <EuiBadge color={outcomeColor(v)}>{v}</EuiBadge> : '—'),
     },
     { field: 'sourceIp', name: 'Source IP', width: '120px', render: (v: string | null) => <EuiText size="xs">{v ?? '—'}</EuiText> },
-    { field: 'country', name: 'Country', width: '110px', render: (v: string | null) => <EuiText size="xs">{v ?? '—'}</EuiText> },
+    {
+      // Internal deployment → source.geo.country is empty; show the envelope origin (dept) instead,
+      // with org/env in the tooltip. Falls back to country if a geo-mapped (external) IP ever appears.
+      field: 'dept',
+      name: 'Dept',
+      width: '110px',
+      render: (_: string | null, row: RecentEvent) => {
+        const label = row.dept ?? row.country ?? '—';
+        const tip = [row.org, row.env, row.country].filter(Boolean).join(' · ');
+        return (
+          <EuiText size="xs" className="eui-textTruncate" title={tip || undefined}>
+            {label}
+          </EuiText>
+        );
+      },
+    },
     {
       field: 'ruleName',
       name: 'Detail',
@@ -77,7 +103,21 @@ export const RecentEventsTable: React.FC<RecentEventsTableProps> = ({ events }) 
         <h3>Recent events</h3>
       </EuiTitle>
       <EuiSpacer size="s" />
-      <EuiBasicTable items={events} columns={columns} tableLayout="fixed" noItemsMessage="No events in this range." />
+      <EuiBasicTable
+        items={pageEvents}
+        columns={columns}
+        tableLayout="fixed"
+        noItemsMessage="No events in this range."
+        pagination={{
+          pageIndex,
+          pageSize: PAGE_SIZE,
+          totalItemCount: events.length,
+          showPerPageOptions: false,
+        }}
+        onChange={({ page }: { page?: { index: number } }) => {
+          if (page) setPageIndex(page.index);
+        }}
+      />
     </EuiPanel>
   );
 };

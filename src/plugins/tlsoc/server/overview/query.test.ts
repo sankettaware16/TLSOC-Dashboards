@@ -140,7 +140,7 @@ describe('toOverviewViewModel', () => {
         ],
       },
       recent_events: {
-        hits: { hits: [{ _source: { '@timestamp': '2026-07-16T12:00:00Z', source: { ip: '1.2.3.4' }, observer: { source_program: 'suricata', source_host: 'ids-01' }, event: { category: ['network', 'intrusion_detection'], kind: 'alert', severity: 3 }, rule: { name: 'ET SCAN Nmap' } } }] },
+        hits: { hits: [{ _source: { '@timestamp': '2026-07-16T12:00:00Z', source: { ip: '1.2.3.4' }, observer: { source_program: 'suricata', source_host: 'ids-01', dept: 'Cse', org: 'Trust_Lab', env: 'Testing' }, event: { category: ['network', 'intrusion_detection'], kind: 'alert', severity: 3 }, rule: { name: 'ET SCAN Nmap' } } }] },
       },
     },
   };
@@ -164,8 +164,28 @@ describe('toOverviewViewModel', () => {
     expect(byType['web-app']).toBe(60);
     expect(byType['web-proxy']).toBe(40);
     // recent event flattened incl. array category joined
-    expect(vm.recentEvents[0]).toMatchObject({ endpoint: 'ids-01', kind: 'alert', severity: 3, ruleName: 'ET SCAN Nmap', category: 'network, intrusion_detection' });
+    expect(vm.recentEvents[0]).toMatchObject({ endpoint: 'ids-01', kind: 'alert', severity: 3, ruleName: 'ET SCAN Nmap', category: 'network, intrusion_detection', dept: 'Cse', org: 'Trust_Lab' });
     expect(vm.httpStatusClass.map((b) => b.key)).toEqual(['2xx']); // 0-count 5xx dropped
+  });
+
+  it('joins a list-valued event.outcome instead of rendering it run together', () => {
+    const vm = toOverviewViewModel(
+      {
+        hits: { total: { value: 2 } },
+        aggregations: {
+          recent_events: {
+            hits: {
+              hits: [
+                { _source: { event: { outcome: ['sent', 'success'] } } },
+                { _source: { event: { outcome: 'failure' } } },
+              ],
+            },
+          },
+        },
+      },
+      2
+    );
+    expect(vm.recentEvents.map((e) => e.outcome)).toEqual(['sent, success', 'failure']);
   });
 
   it('reports null lag/parse when aggs absent and survives empty aggregations', () => {
