@@ -146,6 +146,8 @@ export function useCase(core: CoreStart, id: string) {
           title: 'Could not update case',
           text: err?.body?.message ?? err?.message ?? 'Failed',
         });
+        // 409: a colleague changed it meanwhile, so show their version.
+        if (err?.response?.status === 409) await reload();
         return false;
       }
     },
@@ -166,6 +168,7 @@ export function useCase(core: CoreStart, id: string) {
           title: 'Could not add comment',
           text: err?.body?.message ?? err?.message ?? 'Failed',
         });
+        if (err?.response?.status === 409) await reload();
       }
     },
     [core, id, reload]

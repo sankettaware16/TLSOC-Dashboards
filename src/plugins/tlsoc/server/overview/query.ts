@@ -208,10 +208,10 @@ export function buildOverviewAggs(
     ingest_lag: hasIngested
       ? { percentiles: { percents: [50, 95], script: { lang: 'painless', source: INGEST_LAG_SCRIPT } } }
       : undefined,
-    // recent events
+    // recent events — 125 so the table can page through 5×25 (PAGE_SIZE in recent_events_table.tsx)
     recent_events: {
       top_hits: {
-        size: 25,
+        size: 125,
         sort: [{ '@timestamp': 'desc' }],
         _source: [
           '@timestamp',
@@ -227,6 +227,9 @@ export function buildOverviewAggs(
           'user.name',
           'rule.name',
           'source.geo.country_name',
+          'observer.dept',
+          'observer.org',
+          'observer.env',
         ],
       },
     },
@@ -358,27 +361,32 @@ export function toOverviewViewModel(
     };
   });
 
-  const recentEvents: RecentEvent[] = ((aggs.recent_events?.hits?.hits ?? []) as Array<{ _source: Record<string, any> }>).map(
-    (hit) => {
-      const s = hit._source ?? {};
-      const cat = flatSource(s, 'event.category');
-      return {
-        timestamp: (flatSource(s, '@timestamp') as string) ?? null,
-        sourceIp: (flatSource(s, 'source.ip') as string) ?? null,
-        sourceProgram: (flatSource(s, 'observer.source_program') as string) ?? null,
-        endpoint: (flatSource(s, 'observer.source_host') as string) ?? null,
-        category: Array.isArray(cat) ? cat.join(', ') : ((cat as string) ?? null),
-        kind: (flatSource(s, 'event.kind') as string) ?? null,
-        outcome: (flatSource(s, 'event.outcome') as string) ?? null,
-        severity: (flatSource(s, 'event.severity') as number) ?? null,
-        status: (flatSource(s, 'http.response.status_code') as number) ?? null,
-        path: (flatSource(s, 'url.path') as string) ?? null,
-        user: (flatSource(s, 'user.name') as string) ?? null,
-        ruleName: (flatSource(s, 'rule.name') as string) ?? null,
-        country: (flatSource(s, 'source.geo.country_name') as string) ?? null,
-      };
-    }
-  );
+  const recentEvents: RecentEvent[] = ((aggs.recent_events?.hits?.hits ?? []) as Array<{
+    _source: Record<string, any>;
+  }>).map((hit) => {
+    const s = hit._source ?? {};
+    const cat = flatSource(s, 'event.category');
+    const outcome = flatSource(s, 'event.outcome');
+    return {
+      timestamp: (flatSource(s, '@timestamp') as string) ?? null,
+      sourceIp: (flatSource(s, 'source.ip') as string) ?? null,
+      sourceProgram: (flatSource(s, 'observer.source_program') as string) ?? null,
+      endpoint: (flatSource(s, 'observer.source_host') as string) ?? null,
+      category: Array.isArray(cat) ? cat.join(', ') : ((cat as string) ?? null),
+      kind: (flatSource(s, 'event.kind') as string) ?? null,
+      // Some parsers emit a list (postfix: ["sent", "success"]); rendering it raw read "sentsuccess".
+      outcome: Array.isArray(outcome) ? outcome.join(', ') : ((outcome as string) ?? null),
+      severity: (flatSource(s, 'event.severity') as number) ?? null,
+      status: (flatSource(s, 'http.response.status_code') as number) ?? null,
+      path: (flatSource(s, 'url.path') as string) ?? null,
+      user: (flatSource(s, 'user.name') as string) ?? null,
+      ruleName: (flatSource(s, 'rule.name') as string) ?? null,
+      country: (flatSource(s, 'source.geo.country_name') as string) ?? null,
+      dept: (flatSource(s, 'observer.dept') as string) ?? null,
+      org: (flatSource(s, 'observer.org') as string) ?? null,
+      env: (flatSource(s, 'observer.env') as string) ?? null,
+    };
+  });
 
   return {
     kpis,

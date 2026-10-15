@@ -6,7 +6,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { schema } from '@osd/config-schema';
-import { HttpAuth, IRouter, Logger } from '../../../../core/server';
+import {
+  HttpAuth,
+  IRouter,
+  Logger,
+  OpenSearchDashboardsResponseFactory,
+  SavedObject,
+  SavedObjectsClientContract,
+  SavedObjectsErrorHelpers,
+} from '../../../../core/server';
 import {
   CaseAttributes,
   CaseComment,
@@ -30,7 +38,12 @@ import {
   overrideOwners,
   partitionByIds,
 } from '../../common/alerts';
-import { buildRuleRefMap, fetchAlertsByIds, removeOverrideOwner } from './alerts';
+import {
+  buildRuleRefMap,
+  fetchAlertsByIds,
+  mergeAlertOverrides,
+  removeOverrideOwner,
+} from './alerts';
 import { getCurrentActor } from '../lib/current_actor';
 import {
   callerHasAnyRole,
@@ -69,6 +82,61 @@ function genId(): string {
 function nowIso(): string {
   return new Date().toISOString();
 }
+
+// Thrown by a patch builder to refuse a write outright.
+class CaseEditConflict extends Error {}
+
+const WRITE_ATTEMPTS = 3;
+
+// Version-checked case write: on a 409 (someone saved in between) re-read and rebuild the patch.
+async function writeCaseWithRetry(
+  soClient: SavedObjectsClientContract,
+  id: string,
+  first: SavedObject<CaseAttributes>,
+  build: (current: SavedObject<CaseAttributes>, isRetry: boolean) => Record<string, any>
+): Promise<Record<string, any>> {
+  let current = first;
+  for (let attempt = 1; ; attempt++) {
+    const patch = build(current, attempt > 1);
+    try {
+      await soClient.update<CaseAttributes>(TYPE, id, patch, { version: current.version });
+      return patch;
+    } catch (err) {
+      if (!SavedObjectsErrorHelpers.isConflictError(err) || attempt >= WRITE_ATTEMPTS) throw err;
+      current = await soClient.get<CaseAttributes>(TYPE, id);
+    }
+  }
+}
+
+// Conflict → 409 (UI reloads), deleted mid-write → 404, else 500.
+function caseWriteError(
+  response: OpenSearchDashboardsResponseFactory,
+  logger: Logger,
+  err: any,
+  what: string,
+  id: string
+) {
+  if (err instanceof CaseEditConflict) {
+    return response.customError({ statusCode: 409, body: { message: err.message } });
+  }
+  if (SavedObjectsErrorHelpers.isConflictError(err)) {
+    return response.customError({
+      statusCode: 409,
+      body: { message: 'Others were changing this case at the same moment. Please try again.' },
+    });
+  }
+  if (SavedObjectsErrorHelpers.isNotFoundError(err)) {
+    return response.notFound({ body: { message: `Case ${id} not found.` } });
+  }
+  logger.error(`tlsoc cases ${what}: ${err.message}`);
+  return response.customError({
+    statusCode: 500,
+    body: { message: `Could not ${what}: ${err.message}` },
+  });
+}
+
+const sameValue = (a: unknown, b: unknown) =>
+  JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 /**
  * Register all case management routes (create / list / get / update / delete / add-comment).
@@ -225,7 +293,12 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
         const rawAlerts = await fetchAlertsByIds(esClient, linkedAlertIds);
         const { found, missingIds } = partitionByIds(rawAlerts, linkedAlertIds);
         const rules = await buildRuleRefMap(soClient);
-        const alerts = found.map((a: any) => ({ ...normalizeAlert(a, rules), raw: a }));
+        // Same reopen-override merge as the Alerts list (PROB-29), so both screens agree.
+        const alerts = await mergeAlertOverrides(
+          soClient,
+          found.map((a: any) => ({ ...normalizeAlert(a, rules), raw: a })),
+          logger
+        );
         return response.ok({ body: { alerts, missingIds } });
       } catch (err) {
         logger.error(`tlsoc cases alerts: ${err.message}`);
@@ -267,25 +340,34 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
         logger.error(`tlsoc cases add-alerts get: ${err.message}`);
         return response.customError({ statusCode: 500, body: { message: `Could not load case: ${err.message}` } });
       }
-      const existingSet = new Set(existing.attributes.linkedAlertIds ?? []);
-      const newlyAdded = body.alertIds.filter((a: string) => !existingSet.has(a)).length;
-      const linkedAlertIds = Array.from(new Set([...(existing.attributes.linkedAlertIds ?? []), ...body.alertIds]));
-      const linkedFindingIds = Array.from(new Set([...(existing.attributes.linkedFindingIds ?? []), ...(body.findingIds ?? [])]));
       const now = nowIso();
       const actor = getCurrentActor(request, auth);
-      const alertsPatch: Record<string, any> = { linkedAlertIds, linkedFindingIds, updatedAt: now };
-      if (newlyAdded > 0) {
-        alertsPatch.activity = appendActivity(
-          existing.attributes.activity,
-          buildActivity('alerts_linked', describeAlertsLinked(newlyAdded), actor, genId(), now)
-        );
-      }
       try {
-        await soClient.update<CaseAttributes>(TYPE, id, alertsPatch as any);
-        return response.ok({ body: { linkedAlertCount: linkedAlertIds.length } });
+        const written = await writeCaseWithRetry(soClient, id, existing, (current) => {
+          const existingSet = new Set(current.attributes.linkedAlertIds ?? []);
+          const newlyAdded = body.alertIds.filter((a: string) => !existingSet.has(a)).length;
+          const linkedAlertIds = Array.from(
+            new Set([...(current.attributes.linkedAlertIds ?? []), ...body.alertIds])
+          );
+          const linkedFindingIds = Array.from(
+            new Set([...(current.attributes.linkedFindingIds ?? []), ...(body.findingIds ?? [])])
+          );
+          const alertsPatch: Record<string, any> = {
+            linkedAlertIds,
+            linkedFindingIds,
+            updatedAt: now,
+          };
+          if (newlyAdded > 0) {
+            alertsPatch.activity = appendActivity(
+              current.attributes.activity,
+              buildActivity('alerts_linked', describeAlertsLinked(newlyAdded), actor, genId(), now)
+            );
+          }
+          return alertsPatch;
+        });
+        return response.ok({ body: { linkedAlertCount: written.linkedAlertIds.length } });
       } catch (err) {
-        logger.error(`tlsoc cases add-alerts: ${err.message}`);
-        return response.customError({ statusCode: 500, body: { message: `Could not add alerts to case: ${err.message}` } });
+        return caseWriteError(response, logger, err, 'add alerts to case', id);
       }
     }
   );
@@ -557,19 +639,29 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
       if (reopenActivity) {
         newEntries.push(reopenActivity); // after status_changed — reads as "reopened, then reactivated"
       }
-      if (newEntries.length > 0) {
-        patch.activity = [...(existing.attributes.activity ?? []), ...newEntries];
-      }
+      const editedFields = Object.keys(patch).filter((k) => k !== 'updatedAt' && k !== 'closedAt');
 
       try {
-        await soClient.update<CaseAttributes>(TYPE, id, patch);
+        await writeCaseWithRetry(soClient, id, existing, (current, isRetry) => {
+          if (isRetry) {
+            // A colleague changed one of the fields we're setting: refuse rather than overwrite.
+            const raced = editedFields.filter(
+              (k) => !sameValue((current.attributes as any)[k], existing.attributes[k])
+            );
+            if (raced.length > 0) {
+              throw new CaseEditConflict(
+                `Someone else changed this case's ${raced.join(', ')} while you were saving. ` +
+                  'The page has been reloaded with their change; please review and try again.'
+              );
+            }
+          }
+          return newEntries.length > 0
+            ? { ...patch, activity: [...(current.attributes.activity ?? []), ...newEntries] }
+            : patch;
+        });
         return response.ok({ body: { id } });
       } catch (err) {
-        logger.error(`tlsoc cases update: ${err.message}`);
-        return response.customError({
-          statusCode: 500,
-          body: { message: `Could not update case: ${err.message}` },
-        });
+        return caseWriteError(response, logger, err, 'update case', id);
       }
     }
   );
@@ -663,21 +755,23 @@ export function registerCaseRoutes(router: IRouter, logger: Logger, auth?: HttpA
         text: body.text,
         createdAt: now,
       };
-      const comments = [...(existing.attributes.comments ?? []), comment];
-      const activityAfterComment = appendActivity(
-        existing.attributes.activity,
-        buildActivity('commented', describeComment(), comment.author, genId(), now)
+      const commentActivity = buildActivity(
+        'commented',
+        describeComment(),
+        comment.author,
+        genId(),
+        now
       );
 
       try {
-        await soClient.update<CaseAttributes>(TYPE, id, { comments, activity: activityAfterComment, updatedAt: now });
+        await writeCaseWithRetry(soClient, id, existing, (current) => ({
+          comments: [...(current.attributes.comments ?? []), comment],
+          activity: appendActivity(current.attributes.activity, commentActivity),
+          updatedAt: now,
+        }));
         return response.ok({ body: comment });
       } catch (err) {
-        logger.error(`tlsoc cases comment update: ${err.message}`);
-        return response.customError({
-          statusCode: 500,
-          body: { message: `Could not add comment: ${err.message}` },
-        });
+        return caseWriteError(response, logger, err, 'add comment', id);
       }
     }
   );
