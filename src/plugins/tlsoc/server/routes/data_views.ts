@@ -26,6 +26,10 @@ const ENDPOINT_INDEX_RE = /^fosstlsoc-logs-(.+)-\d{4}\.\d{2}\.\d{2}$/;
 /** Bound on how many per-endpoint data views one `_ensure` call will create. */
 const MAX_ENDPOINT_VIEWS = 50;
 
+/** Only ensure a per-endpoint view when that endpoint has an index this recent (dead endpoints
+ *  like the old ELK-era `*nile` slugs otherwise accrete permanent empty views). */
+const ENDPOINT_FRESH_DAYS = 14;
+
 /** The data plugin's request-scoped index-patterns factory (threaded from `plugin.ts`). */
 export type GetIndexPatternsServiceFactory = () => Promise<
   DataPluginStart['indexPatterns']['indexPatternsServiceFactory']
@@ -119,17 +123,36 @@ export function registerDataViewsRoutes(
 
       const ensured: Array<{ title: string; created: boolean }> = [];
 
-      // Always ensure the base view — never gated on concrete indices existing yet.
+      // Titles that already exist in this (workspace) scope — checked before every create so a
+      // re-run never adds a second copy of a title (the duplicate-views bug: createAndSave's own
+      // guard did not dedupe reliably across the route's repeated callers).
+      let existingTitles = new Set<string>();
       try {
-        await indexPatterns.createAndSave({ title: basePattern, timeFieldName: '@timestamp' }, false, true);
-        ensured.push({ title: basePattern, created: true });
+        existingTitles = new Set((await indexPatterns.getIdsWithTitle(true)).map((e) => e.title));
       } catch (err: any) {
-        if (isDuplicateIndexPatternError(err)) {
-          ensured.push({ title: basePattern, created: false });
-        } else {
-          logger.warn(`tlsoc data_views _ensure: could not create data view "${basePattern}": ${err.message}`);
-        }
+        logger.warn(`tlsoc data_views _ensure: could not list existing data views: ${err.message}`);
       }
+
+      const ensureView = async (title: string) => {
+        if (existingTitles.has(title)) {
+          ensured.push({ title, created: false });
+          return;
+        }
+        try {
+          await indexPatterns.createAndSave({ title, timeFieldName: '@timestamp' }, false, true);
+          existingTitles.add(title);
+          ensured.push({ title, created: true });
+        } catch (err: any) {
+          if (isDuplicateIndexPatternError(err)) {
+            ensured.push({ title, created: false });
+          } else {
+            logger.warn(`tlsoc data_views _ensure: could not create data view "${title}": ${err.message}`);
+          }
+        }
+      };
+
+      // Always ensure the base view — never gated on concrete indices existing yet.
+      await ensureView(basePattern);
 
       // Set the workspace's defaultIndex on EVERY call, not just first-create. Use the ROUTE-
       // HANDLER uiSettings client (`context.core.uiSettings.client`, request-scoped via
@@ -176,24 +199,26 @@ export function registerDataViewsRoutes(
           indices = [];
         }
 
-        const slugs = new Set<string>();
+        // Newest index date per slug, from the YYYY.MM.dd suffix — used to skip dead endpoints.
+        const newestBySlug = new Map<string, string>();
         for (const idx of indices) {
           const m = ENDPOINT_INDEX_RE.exec(idx);
-          if (m) slugs.add(m[1]);
+          if (!m) continue;
+          const date = idx.slice(-10); // YYYY.MM.dd
+          const prev = newestBySlug.get(m[1]);
+          if (!prev || date > prev) newestBySlug.set(m[1], date);
         }
 
-        for (const slug of Array.from(slugs).slice(0, MAX_ENDPOINT_VIEWS)) {
-          const title = `fosstlsoc-logs-${slug}-*`;
-          try {
-            await indexPatterns.createAndSave({ title, timeFieldName: '@timestamp' }, false, true);
-            ensured.push({ title, created: true });
-          } catch (err: any) {
-            if (isDuplicateIndexPatternError(err)) {
-              ensured.push({ title, created: false });
-            } else {
-              logger.warn(`tlsoc data_views _ensure: could not create data view "${title}": ${err.message}`);
-            }
-          }
+        const cutoff = new Date(Date.now() - ENDPOINT_FRESH_DAYS * 86400_000)
+          .toISOString()
+          .slice(0, 10)
+          .replace(/-/g, '.');
+        const freshSlugs = Array.from(newestBySlug.entries())
+          .filter(([, newest]) => newest >= cutoff)
+          .map(([slug]) => slug);
+
+        for (const slug of freshSlugs.slice(0, MAX_ENDPOINT_VIEWS)) {
+          await ensureView(`fosstlsoc-logs-${slug}-*`);
         }
       }
 
