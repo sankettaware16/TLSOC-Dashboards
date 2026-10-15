@@ -5,7 +5,7 @@
 
 import { coreMock, httpServerMock, httpServiceMock } from '../../../../core/server/mocks';
 import { loggerMock } from '@osd/logging/target/mocks';
-import { HttpAuth, RequestHandler } from '../../../../core/server';
+import { HttpAuth, RequestHandler, SavedObjectsErrorHelpers } from '../../../../core/server';
 import { registerCaseRoutes } from './cases';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -649,5 +649,235 @@ describe('registerCaseRoutes — PROB-30 re-close REMOVES-from-set (shared-alert
     expect(ovUpdate).toBeUndefined();
     expect(soDelete).toHaveBeenCalledWith('tlsoc-alert-override', 'a1');
     expect(response.ok).toHaveBeenCalled();
+  });
+});
+describe('registerCaseRoutes — GET /api/tlsoc/cases/{id}/alerts merges reopen overrides', () => {
+  let router: ReturnType<typeof httpServiceMock.createRouter>;
+  const logger = loggerMock.create();
+
+  beforeEach(() => {
+    router = httpServiceMock.createRouter();
+    jest.clearAllMocks();
+  });
+
+  const setup = (overrides: any[] | Error) => {
+    registerCaseRoutes(router, logger, authWithRoles(['tlsoc_l1']));
+    const handler = findHandler(router, 'get', '/api/tlsoc/cases/{id}/alerts');
+    const soGet = jest.fn().mockResolvedValue({
+      id: 'case1',
+      attributes: { ...containedCase(['a1', 'a2', 'gone']).attributes, status: 'In Progress' },
+    });
+    const soFind = jest.fn().mockImplementation(({ type }: any) => {
+      if (type === 'tlsoc-alert-override') {
+        return overrides instanceof Error
+          ? Promise.reject(overrides)
+          : Promise.resolve({ saved_objects: overrides });
+      }
+      return Promise.resolve({ saved_objects: [] }); // detection rules (rule ref map)
+    });
+    const soDelete = jest.fn().mockResolvedValue({});
+    const transportRequest = jest.fn().mockResolvedValue({
+      body: { alerts: [rawAlert('a1', 'm1', 'ACKNOWLEDGED'), rawAlert('a2', 'm1', 'COMPLETED')] },
+    });
+    const context = makeContext({
+      soClient: { get: soGet, find: soFind, delete: soDelete },
+      esClient: { transport: { request: transportRequest } },
+    });
+    const response = httpServerMock.createResponseFactory();
+    const request = httpServerMock.createOpenSearchDashboardsRequest({ params: { id: 'case1' } });
+    return { handler, soDelete, context, response, request };
+  };
+
+  const override = (alertId: string) => ({
+    id: alertId,
+    attributes: {
+      alertId,
+      owners: ['case1'],
+      caseId: 'case1',
+      caseName: 'Brute force from 10.8.0.10',
+      monitorId: 'm1',
+      reopenedAt: '2026-07-19T00:00:00.000Z',
+      reopenedBy: 'analyst',
+    },
+  });
+
+  it('an ACKNOWLEDGED alert with an override comes back reopenedFromCase; engine-moved-on wins', async () => {
+    const { handler, soDelete, context, response, request } = setup([
+      override('a1'),
+      override('a2'),
+    ]);
+    await handler(context, request, response);
+
+    const body = (response.ok as jest.Mock).mock.calls[0][0].body;
+    const byId = Object.fromEntries(body.alerts.map((a: any) => [a.id, a]));
+    expect(byId.a1.state).toBe('ACKNOWLEDGED'); // engine state is never faked
+    expect(byId.a1.reopenedFromCase).toEqual({
+      caseId: 'case1',
+      caseName: 'Brute force from 10.8.0.10',
+      reopenedAt: '2026-07-19T00:00:00.000Z',
+    });
+    expect(byId.a1.raw).toBeDefined(); // hydration payload survives the merge
+    // a2 is COMPLETED in the engine → no badge, and its stale override is cleaned up.
+    expect(byId.a2.reopenedFromCase).toBeUndefined();
+    expect(soDelete).toHaveBeenCalledWith('tlsoc-alert-override', 'a2');
+    expect(body.missingIds).toEqual(['gone']);
+  });
+
+  it('a failed override lookup still returns the alerts (best-effort merge)', async () => {
+    const { handler, context, response, request } = setup(new Error('so down'));
+    await handler(context, request, response);
+
+    const body = (response.ok as jest.Mock).mock.calls[0][0].body;
+    expect(body.alerts.map((a: any) => a.id)).toEqual(['a1', 'a2']);
+    expect(body.alerts.every((a: any) => !a.reopenedFromCase)).toBe(true);
+  });
+});
+
+describe('registerCaseRoutes — concurrent writes never silently drop a colleague’s change', () => {
+  let router: ReturnType<typeof httpServiceMock.createRouter>;
+  const logger = loggerMock.create();
+  const conflict = () => SavedObjectsErrorHelpers.createConflictError('tlsoc-case', 'case1');
+
+  const caseAt = (version: string, attrs: Record<string, any> = {}) => ({
+    ...containedCase(['a1']),
+    version,
+    attributes: { ...containedCase(['a1']).attributes, status: 'In Progress', ...attrs },
+  });
+  const colleagueComment = { id: 'cX', author: 'bob', text: 'theirs', createdAt: 't' };
+  const colleagueActivity = {
+    id: 'actX',
+    type: 'commented',
+    actor: 'bob',
+    summary: 's',
+    createdAt: 't',
+  };
+
+  beforeEach(() => {
+    router = httpServiceMock.createRouter();
+    jest.clearAllMocks();
+  });
+
+  const setup = (method: 'post' | 'put', path: string, reads: any[], updateFailures: number) => {
+    registerCaseRoutes(router, logger, authWithRoles(['tlsoc_l1']));
+    const handler = findHandler(router, method, path);
+    const soGet = jest.fn();
+    reads.forEach((r) => soGet.mockResolvedValueOnce(r));
+    const soUpdate = jest.fn();
+    for (let i = 0; i < updateFailures; i++) soUpdate.mockRejectedValueOnce(conflict());
+    soUpdate.mockResolvedValue({ id: 'case1' });
+    const context = makeContext({
+      soClient: { get: soGet, update: soUpdate },
+      esClient: { transport: { request: jest.fn().mockResolvedValue({ body: { alerts: [] } }) } },
+    });
+    const response = httpServerMock.createResponseFactory();
+    return { handler, soGet, soUpdate, context, response };
+  };
+
+  it('every write passes the version it read (the saved-objects layer then detects races)', async () => {
+    const { handler, soUpdate, context, response } = setup(
+      'post',
+      '/api/tlsoc/cases/{id}/comments',
+      [caseAt('v1')],
+      0
+    );
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { text: 'mine' },
+    });
+    await handler(context, request, response);
+    expect(soUpdate.mock.calls[0][3]).toEqual({ version: 'v1' });
+  });
+
+  it('comment: a colleague commented first → retry keeps BOTH comments and both audit entries', async () => {
+    const { handler, soGet, soUpdate, context, response } = setup(
+      'post',
+      '/api/tlsoc/cases/{id}/comments',
+      [caseAt('v1'), caseAt('v2', { comments: [colleagueComment], activity: [colleagueActivity] })],
+      1
+    );
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { text: 'mine' },
+    });
+    await handler(context, request, response);
+
+    expect(soGet).toHaveBeenCalledTimes(2);
+    expect(soUpdate).toHaveBeenCalledTimes(2);
+    const [, , patch, opts] = soUpdate.mock.calls[1];
+    expect(opts).toEqual({ version: 'v2' });
+    expect(patch.comments.map((c: any) => c.text)).toEqual(['theirs', 'mine']);
+    expect(patch.activity.map((a: any) => a.actor)).toEqual(['bob', expect.any(String)]);
+    expect(response.ok).toHaveBeenCalled();
+  });
+
+  it('comment: still racing after 3 attempts → 409 (UI reloads), never a silent overwrite', async () => {
+    const { handler, soUpdate, context, response } = setup(
+      'post',
+      '/api/tlsoc/cases/{id}/comments',
+      [caseAt('v1'), caseAt('v2'), caseAt('v3')],
+      3
+    );
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { text: 'mine' },
+    });
+    await handler(context, request, response);
+    expect(soUpdate).toHaveBeenCalledTimes(3);
+    expect(response.customError).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 409 }));
+  });
+
+  it('add alerts: a colleague linked a2 first → retry unions a2 + a3 and reports the real count', async () => {
+    const { handler, soUpdate, context, response } = setup(
+      'post',
+      '/api/tlsoc/cases/{id}/alerts',
+      [caseAt('v1'), caseAt('v2', { linkedAlertIds: ['a1', 'a2'] })],
+      1
+    );
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { alertIds: ['a3'] },
+    });
+    await handler(context, request, response);
+    expect(soUpdate.mock.calls[1][2].linkedAlertIds).toEqual(['a1', 'a2', 'a3']);
+    expect((response.ok as jest.Mock).mock.calls[0][0].body).toEqual({ linkedAlertCount: 3 });
+  });
+
+  it('edit: a colleague changed ANOTHER field → retry keeps theirs, writes ours, keeps their audit entry', async () => {
+    const { handler, soUpdate, context, response } = setup(
+      'put',
+      '/api/tlsoc/cases/{id}',
+      [caseAt('v1'), caseAt('v2', { tags: ['vpn'], activity: [colleagueActivity] })],
+      1
+    );
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { severity: 'critical' },
+    });
+    await handler(context, request, response);
+
+    const patch = soUpdate.mock.calls[1][2];
+    expect(patch.severity).toBe('critical');
+    expect('tags' in patch).toBe(false); // the colleague's tags are not touched
+    expect(patch.activity.map((a: any) => a.type)).toEqual(['commented', 'edited']);
+    expect(response.ok).toHaveBeenCalled();
+  });
+
+  it('status: a colleague changed the status at the same moment → 409 naming it, no overwrite', async () => {
+    const { handler, soUpdate, context, response } = setup(
+      'put',
+      '/api/tlsoc/cases/{id}',
+      [caseAt('v1'), caseAt('v2', { status: 'Contained' })],
+      1
+    );
+    const request = httpServerMock.createOpenSearchDashboardsRequest({
+      params: { id: 'case1' },
+      body: { status: 'Assigned' },
+    });
+    await handler(context, request, response);
+
+    expect(soUpdate).toHaveBeenCalledTimes(1); // the retry refused before writing
+    const err = (response.customError as jest.Mock).mock.calls[0][0];
+    expect(err.statusCode).toBe(409);
+    expect(err.body.message).toContain('status');
   });
 });

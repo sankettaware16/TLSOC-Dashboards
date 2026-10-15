@@ -51,9 +51,11 @@ import {
   caseOpenDurationMs,
   caseReporter,
   deriveParticipants,
+  diffCaseEdit,
 } from '../../common/cases';
 import { useCase, useCaseAlerts, HydratedAlert } from './use_cases';
-import { sevColor, stateColor, entityOf } from '../alerts/format';
+import { sevColor, entityOf } from '../alerts/format';
+import { AlertStateBadge } from '../alerts/state_badge';
 import { InvestigationTab } from './investigation_tab';
 
 interface Props {
@@ -234,9 +236,7 @@ export function CaseDetail({ core, data, caseId, onBack }: Props) {
     },
     {
       name: 'State',
-      render: (a: HydratedAlert) => (
-        <EuiBadge color={stateColor(a.state)}>{a.state}</EuiBadge>
-      ),
+      render: (a: HydratedAlert) => <AlertStateBadge alert={a} />,
     },
     {
       field: 'triggerName' as keyof HydratedAlert,
@@ -425,16 +425,21 @@ export function CaseDetail({ core, data, caseId, onBack }: Props) {
             <EuiSpacer size="m" />
             <EuiButton
               fill
-              onClick={() =>
-                updateCase({
+              onClick={() => {
+                const patch = diffCaseEdit(caseItem, {
                   title,
                   description,
                   severity,
-                  assignee: assignee || null,
+                  assignee,
                   tags,
                   category,
-                })
-              }
+                });
+                if (Object.keys(patch).length === 0) {
+                  core.notifications.toasts.addInfo('No changes to save');
+                  return;
+                }
+                updateCase(patch);
+              }}
             >
               Save changes
             </EuiButton>
@@ -668,11 +673,7 @@ export function CaseDetail({ core, data, caseId, onBack }: Props) {
                 },
                 {
                   title: 'State',
-                  description: (
-                    <EuiBadge color={stateColor(selectedAlert.state)}>
-                      {selectedAlert.state}
-                    </EuiBadge>
-                  ),
+                  description: <AlertStateBadge alert={selectedAlert} />,
                 },
                 { title: 'Trigger', description: selectedAlert.triggerName || '—' },
                 { title: 'Entity', description: entityOf(selectedAlert) },

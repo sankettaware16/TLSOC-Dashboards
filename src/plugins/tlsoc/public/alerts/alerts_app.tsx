@@ -24,7 +24,6 @@ import {
   EuiSuperDatePicker,
   EuiText,
   EuiTitle,
-  EuiToolTip,
   OnRefreshChangeProps,
   OnTimeChangeProps,
 } from '@elastic/eui';
@@ -35,7 +34,8 @@ import { TlsocAlert, effectiveAlertState, groupAckTargets } from '../../common/a
 import { buildCaseFromAlert } from '../../common/cases';
 import { sortAlerts } from './sort';
 import { useAlerts } from './use_alerts';
-import { sevColor, stateColor, entityOf } from './format';
+import { sevColor, entityOf } from './format';
+import { AlertStateBadge } from './state_badge';
 import { AddToCaseModal } from './add_to_case_modal';
 import { AlertFlyout } from './alert_flyout';
 
@@ -205,20 +205,7 @@ export function AlertsApp({ core, data, discover }: Props) {
     {
       field: 'state',
       name: 'State',
-      render: (_: any, a: TlsocAlert) =>
-        a.reopenedFromCase ? (
-          // PROB-29: honest reactivation badge — the tooltip discloses the real engine state so the
-          // display override never hides that the engine still has this alert ACKNOWLEDGED.
-          <EuiToolTip
-            content={`Engine state: ${a.state}. Reactivated by reopening case "${a.reopenedFromCase.caseName}".`}
-          >
-            <EuiBadge color="accent" iconType="refresh">
-              Reopened · {a.reopenedFromCase.caseName}
-            </EuiBadge>
-          </EuiToolTip>
-        ) : (
-          <EuiBadge color={stateColor(a.state)}>{a.state}</EuiBadge>
-        ),
+      render: (_: any, a: TlsocAlert) => <AlertStateBadge alert={a} />,
     },
     {
       field: 'startTime',
